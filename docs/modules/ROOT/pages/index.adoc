@@ -1,0 +1,19 @@
+= VSHN Managed Talos
+
+// TODO product logo
+
+Welcome to the https://www.vshn.ch[VSHN] Managed Talos technical documentation site.
+
+[IMPORTANT]
+====
+This product is under active development and not ready for sale.
+
+Please contact VSHN sales to register your interest.
+====
+
+Here you’ll find all the technical documentation.
+Use the search field at the top of this page, navigate through topics with the tree on the left or see the links below.
+
+The product documentation will be published on https://products.docs.vshn.ch[products.docs.vshn.ch] once it's ready.
+
+TIP: Contributions to the documentation are welcome. Just click on btn:[Edit this Page] top-right or head over to https://github.com/vshn/managed-talos-docs[GitHub] where the content source is stored.

@@ -1,0 +1,6 @@
+name: talos
+title: VSHN Managed Talos
+version: main # --> versionless
+start_page: ROOT:index.adoc
+nav:
+- modules/ROOT/partials/nav.adoc

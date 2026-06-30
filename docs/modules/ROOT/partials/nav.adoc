@@ -1,0 +1,45 @@
+* xref:index.adoc[Home]
+
+// TODO Consider to add a "Getting Started" section
+
+* Architecture
+
+* Supported Infrastructures
+** cloudscale
+
+* Install
+** cloudscale
+
+* Update
+
+* Authentication
+
+* Networking
+
+* Ingress
+
+* Storage
+
+* Machine and Node Management
+
+** cloudscale
+
+* Monitoring
+
+* Logging
+
+* GitOps
+
+* Backup and restore
+
+* Day two operations
+
+** Runbooks
+
+** cloudscale
+
+* Decommissioning
+
+* Guidelines
+
+* Decisions
