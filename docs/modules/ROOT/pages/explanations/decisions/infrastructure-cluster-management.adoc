@@ -1,0 +1,109 @@
+= Infrastructure and cluster management
+
+== Problem
+
+We need to define the approach we use to manage cloud infrastructure and the cluster itself for VSHN Managed Talos clusters.
+
+=== Goals
+
+* Define a method for managing cloud infrastructure for VSHN Managed Talos clusters
+* Define a method for managing Talos Linux nodes and Talos Kubernetes control plane
+* Similar operational experience to xref:oc4:ROOT:index.adoc[VSHN Managed OpenShift 4]
+
+=== Non-Goals
+
+* Define the full installation method
+* Define all aspects of managing a Talos cluster
+
+== Proposals
+
+The decision covers two aspects of managing VSHN Managed Talos: managing cloud infrastructure and managing the Talos Linux nodes and control plane.
+The two aspects are correlated, but there are many possible options for managing each aspect.
+Instead of repeating ourselves by trying to cover all combinations of those options, we'll briefly cover infrastructure management and Talos management options separately.
+
+=== Infrastructure management
+
+In this section we provide brief outlines of various options for managing cloud infrastructure for VSHN Managed Talos.
+
+==== Terraform
+
+The first option is to use https://developer.hashicorp.com/terraform[Terraform] (or https://opentofu.org[OpenTofu]) to provision the cloud infrastructure for VSHN Managed Talos.
+This is a safe option; we've got significant experience with this approach from xref:oc4:ROOT:index.adoc[VSHN Managed OpenShift 4].
+Additionally, this option gives us broad support for cloud infrastructure providers since many cloud providers have an official Terraform provider.
+
+==== Cluster API
+
+The second option is to use https://cluster-api.sigs.k8s.io/[Cluster API] to provision the cloud infrastructure for VSHN Managed Talos.
+This is mostly new technology for us, although we've got some experience with OpenShift's xref:oc4:ROOT:explanations/decisions/machine-api.adoc[Machine API] to manage https://www.cloudscale.ch[cloudscale] infrastructure.
+
+Depending on the cloud providers on which we want to offer VSHN Managed Talos this option may incur additional work for us, since fewer cloud infrastructure providers have an official Cluster API provider.
+
+==== Custom tooling
+
+The third option is to write fully custom tooling to provision cloud infrastructure.
+Doing so has a distinct advantage and disadvantage over other approaches: we can do infrastructure provisioning exactly as we want, but we'd have to implement all the nitty-gritty details ourselves.
+This option may be an attractive choice to fill small gaps if we go with <<_cluster_api, Cluster API>> as the main infrastructure provisioning tooling.
+
+=== Cluster management
+
+This section briefly outlines options to manage https://www.siderolabs.com/talos-linux[Talos Linux].
+
+==== `talosctl`
+
+The https://docs.siderolabs.com/talos/v1.13/getting-started/talosctl[official tool] to manage Talos Linux is `talosctl`.
+`talosctl` provides a fairly low-level set of commands to manage Talos Linux nodes and a Talos cluster.
+Cluster management and operations using `talosctl` are quite manual and require careful active operations and monitoring.
+For example, `talosctl upgrade` and `talosctl upgrade-k8s` will upgrade all nodes that are targeted by the command in parallel.
+
+==== Topf
+
+https://postfinance.github.io/topf/main/[Topf] is a Talos orchestrator that was open-sourced by [PostFinance].
+Topf provides a more declarative and modular approach for managing Talos Linux nodes and Talos clusters.
+While the approach is more declarative and modular, Topf still expects the user to apply the full Talos configuration from an external CI pipeline.
+
+==== Cluster API
+
+Apart from managing cloud provider infrastructure, https://cluster-api.sigs.k8s.io/[Cluster API] can also manage Talos Linux nodes and Kubernetes control planes.
+
+The fact that Cluster API can manage both cloud provider infrastructure and Talos Linux makes it an attractive option.
+Additionally, Cluster API enables us to manage the Talos Linux nodes and Kubernetes control plane from within the cluster, providing a very similar operational experience to xref:oc4:ROOT:index.adoc[VSHN Managed OpenShift 4].
+
+There are official Cluster API providers for Talos Linux (https://github.com/siderolabs/cluster-api-control-plane-provider-talos[control plane] and https://github.com/siderolabs/cluster-api-bootstrap-provider-talos[bootstrap]).
+However, since siderolabs is working on their own central management tooling (https://www.siderolabs.com/omni-for-kubernetes-cluster-management[Omni]), upstream activity on the Cluster API providers has slowed down recently.
+Because of that, there's a chance that we'll have to semi-actively maintain these Cluster API providers.
+Beyond that, there's a small chance that we'll have to hard-fork these Cluster API providers, if upstream isn't receptive to our contributions.
+
+==== Custom tooling
+
+We could implement custom Kubernetes operators for managing Talos Linux nodes and the Talos cluster in order to achieve a similar operational experience as xref:oc4:ROOT:index.adoc[VSHN Managed OpenShift].
+However, there's a real possibility that we'd end up inventing our own (worse) Cluster API with this approach.
+Regardless of the decision here, it's likely that we'll build some custom Kubernetes operators for other aspects of VSHN Managed Talos.
+
+== Decision
+
+We've decided to use Cluster API for managing cloud provider infrastructure and the Talos Linux nodes and cluster.
+Additionally, we've decided to build custom tooling for provisioning the handful of cloud provider resources that need to exist before we can provision the cluster.
+
+== Rationale
+
+We've decided to use Cluster API because it gives us a modern unified API for managing the cluster's nodes and control plane and associated cloud infrastructure.
+One big reason for the decision is that Cluster API provides a very similar operational experience to VSHN Managed OpenShift 4.
+With Cluster API we can manage the cluster's nodes and control plane from within the cluster via the Kubernetes API, in a very similar fashion to VSHN Managed OpenShift 4.
+This also allows us to manage the cluster's node, control plane and infrastructure via https://syn.tools[Project Syn].
+
+However, with the decision to use Cluster API, we accept that there's a chance that we'll have to somewhat actively contribute to the Talos Cluster API providers.
+Additionally, we accept that there's a real chance that a cloud infrastructure provider doesn't provide an official Cluster API provider.
+Consequently, we accept that we may have to implement our own Cluster API providers for cloud providers where we'd like to offer VSHN Managed Talos but who don't provide an official Cluster API provider.
+Nevertheless, Cluster API is a technology whose adoption is quickly growing, so it's possible that we'll see an uptick in official Cluster API providers for infrastructure providers.
+
+== References
+
+* https://developer.hashicorp.com/terraform
+* https://opentofu.org/
+* https://cluster-api.sigs.k8s.io/
+* https://www.siderolabs.com/talos-linux
+* https://docs.siderolabs.com/talos/v1.13/getting-started/talosctl
+* https://postfinance.github.io/topf
+* https://github.com/siderolabs/cluster-api-control-plane-provider-talos
+* https://github.com/siderolabs/cluster-api-bootstrap-provider-talos
+* https://github.com/cloudscale-ch/cluster-api-provider-cloudscale
