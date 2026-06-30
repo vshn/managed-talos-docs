@@ -1,6 +1,6 @@
 name: talos
 title: VSHN Managed Talos
-version: main # --> versionless
+version: master # --> versionless, must be "master" even if default branch is main
 start_page: ROOT:index.adoc
 nav:
 - modules/ROOT/partials/nav.adoc
