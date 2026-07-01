@@ -44,3 +44,4 @@
 
 * Decisions
 ** xref:talos:ROOT:explanations/decisions/infrastructure-cluster-management.adoc[]
+** xref:talos:ROOT:explanations/decisions/cluster-api-architecture.adoc[]

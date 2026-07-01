@@ -1,0 +1,76 @@
+= Cluster API architecture
+
+== Problem
+
+We've decided that we use Cluster API to manage infrastructure and Talos Linux for VSHN Managed Talos in the "xref:explanations/decisions/infrastructure-cluster-management.adoc[]" decision.
+However, that decision doesn't outline the actual Cluster API architecture for VSHN Managed Talos.
+Instead, we explore the Cluster API architecture for VSHN Managed Talos in this page.
+
+=== Goals
+
+* Define Cluster API architecture for VSHN Managed Talos
+* Similar operational experience to xref:oc4:ROOT:index.adoc[VSHN Managed OpenShift 4]
+
+=== Non-Goals
+
+* Define install process
+* Define overall cluster management process
+
+== Proposals
+
+=== Central management cluster
+
+The officially recommended way to use https://cluster-api.sigs.k8s.io/user/concepts[Cluster API] is to have a central management cluster which manages a number of "workload clusters."
+
+This approach is attractive for single-tenant environments with significant numbers of clusters.
+It's easy to give application developers access to individual workload clusters without needing to worry about them (accidentally) making changes to the cluster's configuration via Cluster API.
+Access to the central management cluster can be controlled more tightly and restricted to the infrastructure team.
+
+However, in a multi-tenant environment, a central management cluster is a drawback because it increases the potential for cross-customer information or configuration leaks.
+Additionally, a central management cluster significantly reduces the possibility of safely testing Cluster API upgrades and experimenting with new features.
+
+Finally, a centralized management cluster would force us to split the configuration for each VSHN Managed Talos cluster across two https://syn.tools[Project Syn] tenants: the customer's tenant where the cluster's regular Project Syn config lives, and the management cluster's tenant where the cluster's Cluster API definition lives.
+This would be a significant operational overhead compared to OpenShift, where (almost) all the cluster's configuration lives in the customer's Project Syn tenant repository.
+
+==== Management cluster per customer
+
+A variation of having a single central management cluster would be to have a management cluster per customer.
+However, some of the limitations still exist: while this approach would allow us to keep each cluster's configuration in a single Project Syn tenant, the actual operational experience would still be split across the cluster's Kubernetes API and the management cluster's Kubernetes API.
+This split still represents significant operational overhead compared to OpenShift, since engineers are used to being able to check all of an OpenShift cluster's components via the cluster's Kubernetes API.
+
+=== Each cluster manages itself
+
+While it's not necessarily the officially recommended, there's no technical limitation that prevents each cluster from managing itself via Cluster API.
+However, to achieve this architecture, we need to install the Cluster API providers on each cluster.
+While doing so comes with some overhead in resource consumption, it's very manageable: on cloudscale, we require four Cluster API provider pods which request less than half a CPU and less than 500 MB RAM combined.
+The actual usage we observed on our early test clusters is even lower: the four pods consume less than 10 milli CPU and around 200 MB RAM combined.
+
+The big advantages of this architecture are on the operational side.
+When each cluster manages itself via Cluster API, we can manage the cluster's Cluster API resources fully through the cluster's Project Syn tenant repository.
+Additionally, on the operational side, all configurations for a cluster are accessible through the cluster's Kubernetes API.
+Finally, we can update individual clusters to newer Cluster API versions and we can test new Cluster API provider versions while ensuring full isolation from production clusters.
+
+== Decision
+
+Each cluster manages itself via Cluster API.
+To enable this, we install the required Cluster API providers on each cluster.
+
+== Rationale
+
+We believe a centralized management cluster is a bad fit for VSHN Managed Talos because of the following drawbacks:
+
+. Increased blast radius for user errors or Cluster API provider bugs
+. Less flexibility in testing Cluster API changes
+. Unnecessary coupling of clusters belonging to different customers with an increased risk of leaking information / configuration across customer boundaries
+. More complex configuration management for each workload cluster: cluster configuration is split between the customer's Project Syn tenant and the management cluster Project Syn tenant.
+. Operational experience is split: some cluster management tasks need to be done on the management cluster.
+
+While a management cluster per customer would address some of those drawbacks, it doesn't address the main concern of blast radius and the split operational experience.
+
+Finally, the overhead of running the Cluster API providers on each cluster is limited.
+On cloudscale, the overhead is limited to four Cluster API provider pods which consume less than 10 milli CPU and around 200 MB RAM combined.
+
+== References
+
+* https://cluster-api.sigs.k8s.io/user/concepts
+* https://syn.tools
