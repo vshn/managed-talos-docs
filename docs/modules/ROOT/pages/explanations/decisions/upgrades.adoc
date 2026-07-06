@@ -1,0 +1,133 @@
+= Talos Linux and Kubernetes upgrades
+
+== Problem
+
+We need to decide how to manage Talos Linux and Kubernetes upgrades for VSHN Managed Talos.
+
+=== Goals
+
+* Scalable upgrade process
+* Similar operational experience to xref:oc4:ROOT:index.adoc[VSHN Managed OpenShift 4]
+
+=== Non-Goals
+
+* Define install process
+
+== Proposals
+
+This decision has multiple facets: we need to chose an upgrade executor for Talos Linux and Kubernetes, and we need to decide how we trigger and orchestrate the upgrades.
+
+The following sections briefly outline various options for each of the three facets.
+
+=== Talos Linux upgrade executors
+
+==== Cluster API
+
+From our testing, the only way to actually upgrade Talos Linux via Cluster API is to upload a base image for the new Talos Linux version to the cloud provider and create new machines from the updated base image.
+However, manually updating Talos Linux base images doesn't scale.
+To make this approach scale, we'd need to implement custom tooling to manage base images which would require a significant amount of engineering.
+
+==== Cluster API in-place updates
+
+Talos Linux VMs can be upgraded to a new Talos Linux version in-place.
+For example, `talosctl upgrade` will perform an in-place upgrade.
+
+It may be possible to leverage Cluster API's support for https://kubernetes.io/blog/2026/01/27/cluster-api-v1-12-release/#in-place-updates[in-place updates (Cluster API v1.12 announcement)] to execute Talos Linux in-place upgrades.
+However, the Talos Cluster API providers don't implement in-place updates as of 2026-07-06, so this approach would also require a significant amount of engineering.
+
+==== Tuppr
+
+https://github.com/home-operations/tuppr[Tuppr] is a Kubernetes controller which orchestrates in-place upgrades of Talos Linux nodes.
+The controller is configured through a cluster-scoped CRD.
+Apart from updating existing Talos Linux nodes, the controller also detects new nodes that join the cluster and upgrades them to the desired Talos Linux version.
+
+TIP: While Cluster API doesn't provide a way to upgrade Talos Linux, the Talos Cluster API controllers don't freak out when Tuppr is used to upgrade cluster nodes in-place.
+
+=== Kubernetes upgrade executors
+
+==== Cluster API
+
+Since we've decided that we use xref:explanations/decisions/infrastructure-cluster-management.adoc[Cluster API] to manage the cluster's life cycle, using Cluster API to perform Kubernetes upgrades is an obvious option.
+
+The Cluster API Kubernetes upgrade process replaces all nodes in the cluster.
+Additionally, the Cluster API controllers ensure that the upgrades are applied in a suitable order.
+
+==== Tuppr 
+
+https://github.com/home-operations/tuppr[Tuppr] also supports Kubernetes upgrades, but we've not tested whether that part of Tuppr works on a cluster managed by Cluster API.
+
+=== Upgrade triggering and orchestration
+
+==== Manual
+
+The first option is that we manually update the Talos Linux Kubernetes version of the cluster in the cluster's Project Syn configuration.
+While this works, and we can pin upgrades ahead of time using GitLab scheduled merges, the approach doesn't really scale.
+
+Additionally, depending on the choice of upgrade executors, this approach requires a lot of additional work (such as updating Talos Linux base images across multiple tenants on multiple cloud providers).
+
+==== Renovate
+
+The second option is to use https://docs.renovatebot.com/[Renovate] to update the Talos Linux and Kubernetes version in the cluster's Project Syn config.
+This works reasonably well and provides automated upgrades with relatively limited engineering effort.
+However, depending on the choice of upgrade executors, there's still a significant amount of manual work left (for example updating Talos Linux base images across multiple tenants on multiple cloud providers).
+
+NOTE: This document only considers Renovate out of all the available upgrade managers since VSHN already has a working Renovate infrastructure which can be used in Project Syn tenant repositories hosted on `git.vshn.net`.
+
+[NOTE]
+====
+There are some caveats when using Renovate's automerge to automate upgrades:
+
+* We've discovered that Renovate will refuse to automerge a dependency MR if there's already a merged MR with the same title.
+This might be an issue for Project Syn tenants with many Talos clusters with different maintenance windows, but should be circumventable by creating MRs with unique titles, for example by including the cluster's Project Syn ID in each MR title.
+* As of 2026-07-06, Renovate doesn't support `platformAutomerge=true` when using `automergeSchedule`.
+However, there's an https://github.com/renovatebot/renovate/issues/37028[open upstream feature request] to implement support for GitLab's scheduled merges.
+====
+
+==== Custom Controller
+
+The third option is inspired by the decision on xref:oc4:ROOT:explanations/decisions/maintenance-trigger.adoc[Triggering Automated Maintenance] for VSHN Managed OpenShift.
+We've made very good experiences with the https://github.com/appuio/openshift-upgrade-controller/[OpenShift upgrade controller], and would like to have a similar upgrade/maintenance experience for VSHN Managed Talos.
+However, in contrast to OpenShift 4, Talos Linux and Cluster API lack an equivalent of OpenShift's https://github.com/openshift/cluster-version-operator/tree/main[Cluster Version Operator].
+
+Therefore, this approach envisions a custom controller that
+
+* Allows users to configure release channels (read: minor versions) for Talos Linux and Kubernetes
+* Queries upstream for new patch versions in the chosen release channels
+* Orchestrates the chosen upgrade executors to apply new patch versions on a configurable schedule
+** This orchestration must be implemented in a way that doesn't conflict with Project Syn.
+If necessary, we can extend the controller to take ownership of certain manifests, similar to how the OpenShift upgrade controller applies a partial config to the OpenShift `ClusterVersion` custom resource.
+* Performs additional required work, such as upgrading Talos Linux base images, at the start of an upgrade window
+
+This approach also requires a significant amount of engineering, although we may be able to reuse some parts of the OpenShift upgrade controller implementation.
+However, the self-contained nature makes the approach quite attractive, especially in light of achieving a similar operational experience to VSHN Managed OpenShift 4.
+Ideally, the controller would offer a similar feature set to the OpenShift upgrade controller for upgrade orchestration.
+In particular, the controller should support pinning upgrade versions ahead of a maintenance window and running jobs before and after the upgrade.
+
+== Decision
+
+* We use Cluster API as the executor for Kubernetes upgrades.
+* We use Tuppr as the executor for Talos Linux _patch_ upgrades.
+* We use Cluster API as the executor for Talos Linux _minor_ upgrades.
+* For now, we will use Renovate to trigger upgrades.
+However, in order to make VSHN Managed Talos maintenance scalable, we will implement a custom controller to trigger upgrades in the future.
+
+== Rationale
+
+Cluster API provides a robust mechanism and process to perform Kubernetes upgrades, so using it as the executor for Kubernetes upgrades is a natural choice, since we've already decided to use Cluster API to manage the VSHN Managed Talos life cycle.
+
+Since there's no existing tooling to execute Talos Linux upgrades via Cluster API, we select Tuppr as the upgrade executor for Talos Linux patch upgrades.
+However, we will use Cluster API for Talos Linux minor upgrades, accepting that we'll need to update the base image for minor upgrades.
+Since we expect minor upgrades to be less frequent, we're banking on the fact that we most likely won't have to do that many minor upgrades before we can migrate to the custom controller.
+Additionally, we probably won't be able to avoid recreating cluster nodes for Talos Linux minor upgrades since we want to update the Talos Linux minor version in the Talos Cluster API custom resources to ensure that the controllers render `MachineConfiguration` manifests that are compatible with the Talos Linux minor version.
+
+For orchestrating upgrades, we will start with Renovate.
+With a bit of custom configuration, we should be able to achieve automated Talos Linux and Kubernetes patch upgrades.
+However, we believe that having each cluster be as self-contained as possible will ensure the least operational friction for standard day 2 operations, such as patch upgrades.
+Therefore, our end goal is to implement a custom controller for orchestrating and trigger Talos Linux and Kubernetes upgrades in VSHN Managed Talos.
+
+== References
+
+* https://kubernetes.io/blog/2026/01/27/cluster-api-v1-12-release
+* https://github.com/home-operations/tuppr
+* https://github.com/appuio/openshift-upgrade-controller
+* https://docs.renovatebot.com/
