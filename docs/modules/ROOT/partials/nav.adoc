@@ -43,3 +43,4 @@
 * Guidelines
 
 * Decisions
+** xref:talos:ROOT:explanations/decisions/infrastructure-cluster-management.adoc[]
