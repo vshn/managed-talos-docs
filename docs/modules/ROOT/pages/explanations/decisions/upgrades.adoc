@@ -23,7 +23,7 @@ The following sections briefly outline various options for each of the three fac
 
 ==== Cluster API
 
-From our testing, the only way to actually upgrade Talos Linux via Cluster API is to upload a base image for the new Talos Linux version to the cloud provider and create new machines from the updated base image.
+From our testing, the only way to actually upgrade Talos Linux via Cluster API (CAPI) is to upload a base image for the new Talos Linux version to the cloud provider and create new machines from the updated base image.
 However, manually updating Talos Linux base images doesn't scale.
 To make this approach scale, we'd need to implement custom tooling to manage base images which would require a significant amount of engineering.
 
@@ -42,6 +42,23 @@ The controller is configured through a cluster-scoped CRD.
 Apart from updating existing Talos Linux nodes, the controller also detects new nodes that join the cluster and upgrades them to the desired Talos Linux version.
 
 TIP: While Cluster API doesn't provide a way to upgrade Talos Linux, the Talos Cluster API controllers don't freak out when Tuppr is used to upgrade cluster nodes in-place.
+
+[NOTE]
+====
+During fairly extensive testing, we've found some limitations of using Tuppr for Talos Linux upgrades on a CAPI-managed cluster:
+
+. The Tuppr `TalosUpgrade` needs a custom health check to wait for a fully healthy and bootstrapped Talos control plane.
+Otherwise, Tuppr will reboot control plane nodes that are still getting bootstrapped by CAPI.
+From what we've seen, the Talos control plane CAPI provider (or Talos itself) is unable to recover from a reboot that happens before a control plane node is fully joined to the cluster.
+. We've noticed that some node reboots of control plane nodes result in the node getting stuck during shutdown with `rcu: INFO: rcu_preempt self-detected stall on CPU`.
+From some unscientific observations, this seems to happen roughly once in three reboots.
+It's currently not clear whether this is actually caused by Tuppr, or whether this would happen with some other in-place upgrade trigger as well.
+If this happens, the node won't recover until it's rebooted via cloud provider API.
+This is particularly bad for clusters with a single control plane node, since the Kubernetes API becomes completely unavailable if this happens.
+. The Tuppr `TalosUpgrade` has a hard limit of five upgrade completions for the same target Talos version.
+After that, subsequent attempts to upgrade additional nodes which are created from an outdated base image immediately put the `TalosUpgrade` in a `Failed` state.
+From what we've found, this can be circumvented by dropping old entries from `.status.history` of the `TalosUpgrade`.
+====
 
 === Kubernetes upgrade executors
 
@@ -116,6 +133,9 @@ However, in order to make VSHN Managed Talos maintenance scalable, we will imple
 Cluster API provides a robust mechanism and process to perform Kubernetes upgrades, so using it as the executor for Kubernetes upgrades is a natural choice, since we've already decided to use Cluster API to manage the VSHN Managed Talos life cycle.
 
 Since there's no existing tooling to execute Talos Linux upgrades via Cluster API, we select Tuppr as the upgrade executor for Talos Linux patch upgrades.
+We make this choice so we can start with a Talos patch upgrade executor that we don't need to implement ourselves, but accept that the approach has some shortcomings.
+Medium-term we'll either need to properly address the shortcomings of Tuppr which we've already identified or replace Tuppr with another executor.
+
 However, we will use Cluster API for Talos Linux minor upgrades, accepting that we'll need to update the base image for minor upgrades.
 Since we expect minor upgrades to be less frequent, we're banking on the fact that we most likely won't have to do that many minor upgrades before we can migrate to the custom controller.
 Additionally, we probably won't be able to avoid recreating cluster nodes for Talos Linux minor upgrades since we want to update the Talos Linux minor version in the Talos Cluster API custom resources to ensure that the controllers render `MachineConfiguration` manifests that are compatible with the Talos Linux minor version.
