@@ -1,0 +1,144 @@
+= API Certificates
+
+== Problem
+
+We need to decide how we handle the Kubernetes API server certificate for VSHN Managed Talos clusters.
+
+Talos generates a self-signed Kubernetes root CA per cluster and dynamically issues the API server's serving certificate from that CA on each control plane node.
+The serving certificate contains internal and external IPs, the control plane endpoint, and the standard in-cluster names (`kubernetes.default.svc` etc.) in its subject alternative names.
+When provisioning clusters through Cluster API, the CA is generated once by the Talos bootstrap provider (CABPT) and stored in the management cluster (with our xref:explanations/decisions/cluster-api-architecture.adoc[Cluster API architecture], that's the cluster itself).
+
+This raises the question of whether users' kubeconfigs must contain the cluster CA certificate, whether we can instead present a publicly trusted certificate on the API endpoint, and what happens when the CA is rotated.
+
+=== Goals
+
+* Decide how the Kubernetes API server certificate is issued for VSHN Managed Talos clusters
+* Ensure the certificate is valid for the endpoints users actually connect to, including an external FQDN
+* Understand and document the implications for users (kubeconfig contents, CA rotation)
+* An approach that works with our Cluster API-based provisioning (CABPT/CACPPT)
+
+=== Non-Goals
+
+* Certificates for Ingress or workloads 
+* User authentication
+* Talos API (`apid`) certificates.
+These are only relevant for VSHN-internal access via `talosctl`
+
+== Proposals
+
+=== Let's Encrypt / public CA for the API server certificate
+
+Have the API server present a certificate issued by a publicly trusted CA (for example Let's Encrypt via cert-manager), so that kubeconfigs wouldn't need to pin a CA certificate.
+
+This doesn't work on Talos:
+
+* Talos pins `--tls-cert-file`/`--tls-private-key-file` to its own dynamically-issued certificate.
+  Both flags are on the deny list for `cluster.apiServer.extraArgs`, so the serving certificate can't be replaced (https://github.com/siderolabs/talos/blob/main/internal/app/machined/pkg/controllers/k8s/control_plane_final.go[control_plane_final.go]).
+* The only loophole is `--tls-sni-cert-key` (not denied), which would serve a public certificate for one SNI hostname while keeping the Talos certificate as default.
+  The API server itself would even hot-reload the file, but Talos has no supported path from a renewed certificate (for example a cert-manager Secret) to the host file the static pod mounts, since `machine.files` only writes static machine-config content under `/var`.
+  Closing that gap needs a custom DaemonSet writing the certificate into a `/var` hostPath, which is unsupported and a bootstrap hazard (the API server would depend on a file produced by a workload running on that same API server).
+* Even with a public serving certificate, the cluster CA is still required.
+  Kubelets and all in-cluster clients reaching the API server at `kubernetes.default.svc` validate it against the Talos-managed cluster CA.
+  Client certificate authentication also still requires the cluster CA.
+* A public CA can only issue for public FQDNs, never for the internal IPs and service names that must be in the certificate's SANs, which is why a single publicly-issued certificate can't cover the API server's needs in the first place.
+
+=== Default per-cluster CA (Talos/CABPT default)
+
+Keep the self-signed per-cluster Kubernetes CA that Talos generates.
+With Cluster API, CABPT generates the secrets bundle once per cluster and stores it in the management cluster (full bundle in the `<cluster>-talos` secret, Kubernetes CA in `<cluster>-ca`).
+CACPPT mints admin kubeconfigs from it following the standard CAPI contract (`<cluster>-kubeconfig` secret, `clusterctl get kubeconfig`).
+
+* The CA is valid for 10 years.
+  The API server's serving certificate is issued from it per node with 1 year validity and is automatically rotated by Talos at half-life.
+* Extra SANs, for example an external FQDN for the API endpoint, can be added through a config patch on the `TalosControlPlane` resource setting `cluster.apiServer.certSANs`.
+  The control plane endpoint host from the `Cluster` resource is included as a SAN automatically.
+  Note that changing config patches on an existing `TalosControlPlane` triggers a rolling replacement of the control plane machines.
+* User kubeconfigs must embed the cluster CA certificate (`certificate-authority-data`).
+  This matches what all major managed Kubernetes providers (GKE, EKS, AKS) and Cluster API itself do.
+* Rotating the cluster CA (`talosctl rotate-ca --kubernetes`) is possible but disruptive.
+  It's a multi-phase rolling operation, and previously distributed kubeconfigs become invalid during it (the serving certificate switches to the new CA mid-rotation, and client certificates issued by the old CA are rejected once the old CA is dropped from `cluster.acceptedCAs`).
+
+=== VSHN-managed CA (Vault) with per-cluster intermediate CA
+
+Operate a VSHN root CA (for example in Vault) and issue a per-cluster intermediate CA which is used as the cluster's Kubernetes CA.
+This is mechanically possible.
+The Kubernetes CA in the Talos secrets bundle can be replaced with our own CA, and CABPT reuses a pre-seeded `<cluster>-talos` secret rather than generating one (the secret must contain a complete secrets bundle in `talosctl gen secrets` format).
+
+* Would in theory allow rotating a cluster's intermediate CA without users updating kubeconfigs, if kubeconfigs pinned the VSHN root instead of the intermediate.
+  In practice this doesn't hold up.
+  Client certificates are issued by the intermediate and become invalid on rotation anyway (unless the old intermediate is kept in `cluster.acceptedCAs`), so the main advertised benefit is much smaller than it appears.
+* The intermediate's _private key_ must be present on every control plane node (Talos issues the API server's serving certificate from it locally on each node, and the controller manager signs certificate requests with it) and in the management cluster, which weakens the security argument for a hierarchical PKI, since compromising one cluster's control plane exposes a CA chained to the VSHN root.
+* Only Talos v1.14+ (https://github.com/siderolabs/talos/pull/13805[#13805], merged 2026-07-20, first shipped in v1.14.0-beta.0, no backport to v1.13) ships the issuing CA in the serving certificate chain.
+  On all current stable releases, clients trusting only the root can't validate the API server.
+* Requires us to run proper CA infrastructure (Vault PKI, key ceremonies, revocation, monitoring) and custom provisioning glue around CABPT, for a trust anchor that's still private and still has to be distributed through kubeconfig.
+
+=== Authenticating proxy with a public certificate
+
+Front the API server with a TLS-terminating reverse proxy that holds a publicly trusted certificate and authenticates users (typically through OIDC), then re-originates to the real API server using the cluster's own credentials.
+The user's kubeconfig points at the proxy, contains no `certificate-authority-data`, and carries no client certificate.
+The per-cluster Talos CA stays intact underneath.
+
+This is SideroLabs' own answer.
+Sidero Omni fronts every managed cluster's API this way (`kubectl` to the Omni proxy to `kube-apiserver`), and it's a well-established pattern elsewhere (kube-oidc-proxy, Rancher's proxied cluster access, Teleport, Pinniped).
+
+* It's the only approach that delivers a "clean," publicly trusted kubeconfig, but it does so with a proxy layer, not by changing the API certificate.
+* Client certificate authentication can't survive TLS termination, so this only works with bearer-token / OIDC authentication.
+* Omni itself isn't an option for us.
+  It's SideroLabs' own management plane (SideroLink-based provisioning and lifecycle) and would replace, not complement, our decision to xref:explanations/decisions/infrastructure-cluster-management.adoc[use Cluster API].
+  Only the proxy pattern is reusable, and we'd have to run and secure our own proxy.
+* This belongs to user authentication and access (OIDC login, separate ticket), not to the API certificate decision.
+  It sits on top of whichever CA we choose here.
+
+== Decision
+
+We use the default self-signed per-cluster Kubernetes CA generated by the Talos bootstrap provider.
+
+The external FQDN of the API endpoint is added to the API server certificate via a `cluster.apiServer.certSANs` config patch on the `TalosControlPlane` resource.
+
+User kubeconfigs embed the cluster CA certificate.
+Users must fetch a new kubeconfig in the (rare and announced) event of a CA rotation.
+
+== Rationale
+
+A publicly trusted certificate can't be served by the Talos API server itself in any supportable way, and wouldn't remove the private CA even if it could, since in-cluster trust and client certificate authentication depend on it.
+A publicly trusted _endpoint_ is achievable, but only by fronting the API with an authenticating proxy (as Sidero Omni does).
+That's an access-layer concern for the OIDC login ticket.
+It sits on top of the per-cluster CA decided here and isn't a substitute for it.
+Adopting Omni itself is ruled out separately, since it would replace our xref:explanations/decisions/infrastructure-cluster-management.adoc[Cluster API] provisioning.
+
+The per-cluster CA is the industry standard.
+GKE, EKS and AKS all use a self-signed per-cluster CA distributed inside the kubeconfig.
+(GKE's newer DNS-based endpoint is an exception. Its front end presents a certificate signed by a public Google CA, so clients validate it through the public trust store instead of the cluster CA, which is the proxy pattern described above rather than a different CA model.)
+Users and tooling universally handle `certificate-authority-data` in kubeconfigs, so this requires no explanation beyond "use the kubeconfig we provide."
+
+The VSHN-managed CA hierarchy adds substantial operational load and a real security liability (root-chained key material on customer control planes) while its main benefit (CA rotation without kubeconfig updates) largely disappears in practice, because client certificates are invalidated by rotation regardless.
+With OIDC login, kubeconfigs won't contain client certificates at all, further reducing what a CA rotation invalidates.
+Users then only need refreshed `certificate-authority-data`, which our kubeconfig distribution can hand out at any time.
+
+CA rotation is expected to be an exceptional event (the CA is valid for 10 years).
+Accepting a "re-download your kubeconfig" step is a much better trade-off than operating a PKI hierarchy.
+
+=== Implications for users
+
+* Kubeconfigs handed out to users contain the cluster CA certificate, since the API server certificate can't be validated through the system trust store.
+* The API endpoint FQDN and IPs are covered by the certificate's SANs, so any standard Kubernetes client works out of the box with the provided kubeconfig.
+* If a cluster's CA is ever rotated, users must fetch a new kubeconfig.
+  Serving certificate rotation (automatic, roughly every 6 months) is transparent to users.
+* Until OIDC login lands, `clusterctl`-style admin kubeconfigs use client certificates with 1 year validity.
+  CACPPT automatically regenerates the `<cluster>-kubeconfig` secret at half-life, but users need to fetch a refreshed kubeconfig before their copy expires.
+
+== References
+
+* https://docs.siderolabs.com/talos/v1.13/security/cert-management[Talos: Certificate Management]
+* https://docs.siderolabs.com/talos/v1.13/security/ca-rotation[Talos: CA Rotation]
+* https://docs.siderolabs.com/talos/v1.13/reference/configuration/v1alpha1/config[Talos: Machine Config Reference (`cluster.apiServer.certSANs`, `cluster.acceptedCAs`, `cluster.adminKubeconfig`)]
+* https://github.com/siderolabs/talos/discussions/8866[Talos Discussion #8866: Custom api-server Certificates]
+* https://github.com/siderolabs/talos/issues/13479[Talos Issue #13479] / https://github.com/siderolabs/talos/pull/13805[PR #13805: ship issuing CA in serving cert chain]
+* https://github.com/siderolabs/cluster-api-bootstrap-provider-talos[CABPT: secrets bundle generation and `<cluster>-ca` secret]
+* https://github.com/siderolabs/cluster-api-control-plane-provider-talos[CACPPT: kubeconfig generation and rotation]
+* https://docs.cloud.google.com/kubernetes-engine/docs/how-to/api-server-authentication[GKE: API server authentication (cluster root CA)]
+* https://docs.aws.amazon.com/eks/latest/userguide/create-kubeconfig.html[EKS: kubeconfig with cluster CA]
+* https://learn.microsoft.com/en-us/azure/aks/certificate-rotation[AKS: certificate rotation (cluster CA)]
+* https://docs.siderolabs.com/omni/getting-started/use-kubectl-with-omni[Sidero Omni: using `kubectl` through the Omni proxy (public certificate + OIDC, per-cluster CA kept underneath)]
+* https://github.com/TremoloSecurity/kube-oidc-proxy[kube-oidc-proxy] / https://pinniped.dev[Pinniped: authenticating proxies in front of the API server]
+* https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/security_and_compliance/configuring-certificates[OpenShift: Configuring certificates]
