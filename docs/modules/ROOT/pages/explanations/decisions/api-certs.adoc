@@ -86,7 +86,7 @@ Sidero Omni fronts every managed cluster's API this way (`kubectl` to the Omni p
 * Omni itself isn't an option for us.
   It's SideroLabs' own management plane (SideroLink-based provisioning and lifecycle) and would replace, not complement, our decision to xref:explanations/decisions/infrastructure-cluster-management.adoc[use Cluster API].
   Only the proxy pattern is reusable, and we'd have to run and secure our own proxy.
-* This belongs to user authentication and access (OIDC login, separate ticket), not to the API certificate decision.
+* This belongs to user authentication and access (OIDC login, separate decision), not to the API certificate decision.
   It sits on top of whichever CA we choose here.
 
 == Decision
