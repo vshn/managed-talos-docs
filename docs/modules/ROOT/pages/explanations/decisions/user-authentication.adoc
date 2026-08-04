@@ -13,7 +13,7 @@ We would like to be able to use a single mechanism for all VSHN users (VSHNeers 
 
 === Non-Goals
 
-* Define emergency access authentication
+* Define xref:explanations/decisions/emergency-credentials.adoc[emergency access authentication]
 
 == Proposals
 

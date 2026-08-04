@@ -48,3 +48,4 @@
 ** xref:talos:ROOT:explanations/decisions/upgrades.adoc[]
 ** xref:talos:ROOT:explanations/decisions/api-certs.adoc[]
 ** xref:talos:ROOT:explanations/decisions/user-authentication.adoc[]
+** xref:talos:ROOT:explanations/decisions/emergency-credentials.adoc[]
