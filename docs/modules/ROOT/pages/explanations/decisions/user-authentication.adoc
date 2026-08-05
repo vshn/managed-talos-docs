@@ -1,0 +1,66 @@
+= User authentication
+
+== Problem
+
+We need to decide how users will authenticate to VSHN Managed Talos clusters during regular operations.
+We would like to be able to use a single mechanism for all VSHN users (VSHNeers and customer users) for authentication.
+
+=== Goals
+
+* Define user authentication during regular operations
+* SSO for VSHNeers and customer users with multiple clusters
+* Optionally, the customer can use their own IdP for authentication
+
+=== Non-Goals
+
+* Define emergency access authentication
+
+== Proposals
+
+=== Directly connect the Kubernetes API server to the external identity providers
+
+The Kubernetes API server has supported configuring an external identity provider through https://kubernetes.io/docs/reference/access-authn-authz/authentication/#using-authentication-configuration[command line arguments] for a long time.
+Notably, that mechanism doesn't support configuring multiple different external identity providers.
+To address this limitation, operators usually use a federated identity provider such as https://dexidp.io[Dex].
+We describe this approach in more detail in the next section.
+
+However, in Kubernetes 1.34, configuring API server authentication through a https://kubernetes.io/docs/reference/access-authn-authz/authentication/#using-authentication-configuration[config file] has become stable and enabled by default.
+This mechanism, in contrast to the command line arguments, allows configuring multiple external identity providers and also enables operators to configure claim and user validation.
+Notably, operators must decide (via claim mappings and user validation) how users from different external identity providers are mapped to K8s identities and groups and whether identities should be merged into a single user on the cluster.
+
+=== Connect the Kubernetes API server to a federated identity provider
+
+An established option to connect a Kubernetes API server to multiple external identity providers is to connect the K8s API server to a federated identity provider, such as https://dexidp.io[Dex].
+By interposing a federated identity provider, the limitation of only being able to configure a single external IdP via Kubernetes API server command line arguments can be circumvented by configuring the external identity providers in Dex.
+However, this approach introduces an additional moving part in the authentication chain.
+This can be particularly troublesome if the federated identity provider runs as pods in the cluster that's connected to it.
+In this case, debugging and resolving issues with the federated identity provider quickly require emergency access.
+
+Additionally, for Kubernetes 1.34 and newer, this approach doesn't really bring any significant benefits anymore, since it's now possible to configure multiple external IdPs directly in the Kubernetes API server.
+
+=== Client certificates or tokens
+
+We could just distribute client certificates or tokens to users (VSHNeers and customer users).
+This approach doesn't need any configuration on the Kubernetes API server side.
+Instead, this needs careful handling of distribution of authentication material and poses additional questions regarding credential revocation in the case of client certificates.
+
+== Decision
+
+We're using the native Kubernetes API server `AuthenticationConfiguration` to connect the API server directly to the VSHN Identity Provider.
+This mechanism has become stable in Kubernetes 1.34, and supports configuring multiple IdPs, so it covers all the requirements for VSHN Managed Talos.
+
+== Rationale
+
+The native Kubernetes API server `AuthenticationConfiguration` supports everything we need: multiple IdPs, claim mappings and user validation.
+By leveraging native Kubernetes mechanisms, we don't need to operate and maintain yet another component.
+Additionally, by keeping the authentication chain to as few moving parts as possible (K8s API server and VSHN IdP) we minimize the potential for authentication issues.
+Additionally, Talos 1.14 should provide a https://github.com/siderolabs/talos/pull/13594[new `MachineConfiguration` API] which we can use to directly deploy a suitable `AuthenticationConfiguration` without having to manually deploy config files and configure volume mounts for the Kubernetes API server pods.
+
+We never seriously considered client certificates or tokens as the regular authentication mechanism, but listed it in the proposals section for completeness' sake.
+Notably, we can't provide single sign-on with client certificates or tokens.
+Additionally, handling and distributing client credentials manually is a significant amount of overhead and introduces a large risk for credential leaks.
+
+== References
+
+* https://kubernetes.io/docs/reference/access-authn-authz/authentication/#external-integrations
+* https://dexidp.io/
