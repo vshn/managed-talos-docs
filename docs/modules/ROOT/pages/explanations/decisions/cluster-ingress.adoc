@@ -35,7 +35,7 @@ It works around https://github.com/cilium/cilium/issues/35347[a known Cilium iss
 
 NOTE: During initial testing, we haven't been able to access the Cilium ingress running on an IPv4 single stack cluster when connecting over IPv6 to a load balancer which has a IPv6 public IP and which forwards the client IP to the ingress controller via PROXY protocol.
 
-=== Cilium Gateway API implementation
+=== Cilium Gateway API 
 
 Cilium also provides https://docs.cilium.io/en/v1.18/network/servicemesh/gateway-api/gateway-api/[Gateway API support] for HTTP and HTTPS traffic.
 https://cert-manager.io/docs/usage/gateway/[cert-manager can issue certificates for `Gateway` resources].
@@ -44,14 +44,22 @@ Cilium is actively working on improving their Gateway API implementation.
 Support for https://github.com/cilium/cilium/pull/46303[`ListenerSet`] and https://github.com/cilium/cilium/pull/46184[`TCPRoute` and `UDPRoute`] have been merged, and are available in https://github.com/cilium/cilium/releases/tag/v1.20.0[Cilium 1.20].
 
 Finally, cert-manager can https://cert-manager.io/docs/usage/gateway/[issue certificates for `Gateway` resources with an appropriate configuration].
-Starting with version 1.20, cert-manager also supports the Gateway API `ListenerSet` CRD.
 
+=== kgateway Gateway API 
 
-=== kgateyway
-// TODO
+kgateway provides https://kgateway.dev/docs/envoy/latest/quickstart/[Gateway API support] for HTTP and HTTPS traffic. It is a modern and well supported CNCF sandbox project with its focus on the Gateway API.
 
-=== HAProxy Ingress
-// TODO
+cert-manager https://cert-manager.io/docs/usage/gateway/[issue certificates for `Gateway` resources with an appropriate configuration].
+
+We do not have experience with kgateway as we've not used it on our clusters.
+
+Due to the focus on the Gateway API, kgateway does not support Ingress.
+
+=== HAProxy Ingress and Unified Gateway
+
+HAProxy offers both https://www.haproxy.com/documentation/kubernetes-ingress/[Ingress] and https://www.haproxy.com/documentation/haproxy-unified-gateway/[Gateway API] support. While the HAProxy Ingress controller supports Gateway API, it is on a early API and they do recommend to use their Unified Gateway product. Should we want to support Gateway API in the future, it would mean that we have to install another Operator in cluster to get the latest features.
+
+HAProxy is Ingress controller OpenShift uses, so we have experience running it through our Managed OpenShift product.
 
 == Decision
 
