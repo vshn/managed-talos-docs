@@ -46,19 +46,19 @@ Finally, cert-manager can https://cert-manager.io/docs/usage/gateway/[issue cert
 
 === kgateway Gateway API 
 
-kgateway provides https://kgateway.dev/docs/envoy/latest/quickstart/[Gateway API support] for HTTP and HTTPS traffic. It is a modern and well supported CNCF sandbox project with its focus on the Gateway API.
+kgateway provides https://kgateway.dev/docs/envoy/latest/quickstart/[Gateway API support] for HTTP and HTTPS traffic. It's a modern and well supported CNCF sandbox project with its focus on the Gateway API.
 
 cert-manager https://cert-manager.io/docs/usage/gateway/[issue certificates for `Gateway` resources with an appropriate configuration].
 
-We do not have experience with kgateway as we've not used it on our clusters.
+We don't have experience with kgateway as we've not used it on our clusters.
 
-Due to the focus on the Gateway API, kgateway does not support Ingress.
+Due to the focus on the Gateway API, kgateway doesn't support Ingress.
 
 === HAProxy Ingress and Unified Gateway
 
-HAProxy offers both https://www.haproxy.com/documentation/kubernetes-ingress/[Ingress] and https://www.haproxy.com/documentation/haproxy-unified-gateway/[Gateway API] support. While the HAProxy Ingress controller supports Gateway API, it is on a early API and they do recommend to use their Unified Gateway product. Should we want to support Gateway API in the future, it would mean that we have to install another Operator in cluster to get the latest features.
+HAProxy offers both https://www.haproxy.com/documentation/kubernetes-ingress/[Ingress] and https://www.haproxy.com/documentation/haproxy-unified-gateway/[Gateway API] support. While the HAProxy Ingress controller supports Gateway API, it's on a early API and they do recommend to use their Unified Gateway product. Should we want to support Gateway API in the future, it would mean that we'd have to install another Operator in cluster to get the latest features.
 
-HAProxy is Ingress controller OpenShift uses, so we have experience running it through our Managed OpenShift product.
+HAProxy is Ingress controller OpenShift uses, so we've gained experience running it through our Managed OpenShift product.
 
 == Decision
 
@@ -75,7 +75,7 @@ Finally, while Cilium's ingress controller integrates with cert-manager, there i
 While this isn't great (especially for `Ingress` resources that are managed via GitOps), we believe it should be possible to fix this shortcoming
 
 While it would be nice to offer Gateway API by default from the start, it's not strictly necessary to do so.
-Additionally, we don't have that much information regarding which Gateway API features are actually relevant to customers, so it makes more sense to defer choosing a Gateway API implementation until we have some customer insights.
+Additionally, we don't have that much information regarding which Gateway API features are actually relevant to customers, so it makes more sense to defer choosing a Gateway API implementation until we've gathered some customer insights.
 Also, while the Kubernetes Ingress API isn't getting developed anymore, and new features only land in Gateway API, it's stable and covers the basic features that are required to expose a simple application. From the operational perspective, only supporting the Kubernetes Ingress API keeps the test and support surface small.
 Since Cilium provides a reasonable Gateway API implementation, it's likely that we'll end up going with Cilium's implementation if and when we decide to offer a Gateway API implementation by default.
 
