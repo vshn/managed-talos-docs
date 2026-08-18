@@ -3,19 +3,18 @@
 == Problem
 
 We need to decide how workloads on VSHN Managed Talos clusters are exposed over HTTP and HTTPS.
-Because Cilium supports both the Kubernetes Ingress API and Gateway API, we also need to decide which API we support for the initial release.
+Since Kubernetes offers both the Ingress API and Gateway API, we also need to decide which APIs we support for the initial release.
 
 === Goals
 
 * Select an ingress implementation for VSHN Managed Talos clusters
 * Expose workloads over HTTP and HTTPS
 * Support automated TLS certificate issuance and renewal with cert-manager
-* Keep a path open for adopting Gateway API later
 
 === Non-Goals
 
-* Support `TCPRoute` or `UDPRoute` resources
-* Support IPv6 or dual-stack ingress in the initial release
+* Support for service type `LoadBalancer`
+* Support for Gateway API // Let's see if we keep this.
 
 == Proposals
 
@@ -34,35 +33,44 @@ In our tested configuration with Cilium's HTTPS enforcement enabled, an `Ingress
 This annotation makes cert-manager modify the existing `Ingress` resource instead of creating a separate solver resource.
 It works around https://github.com/cilium/cilium/issues/35347[a known Cilium issue with HTTPS enforcement for multiple `Ingress` resources using the same hostname].
 
-Our initial testing hasn't yet produced a working IPv6 ingress setup.
+NOTE: During initial testing, we haven't been able to access the Cilium ingress running on an IPv4 single stack cluster when connecting over IPv6 to a load balancer which has a IPv6 public IP and which forwards the client IP to the ingress controller via PROXY protocol.
 
 === Cilium Gateway API implementation
 
-Cilium 1.18 also provides https://docs.cilium.io/en/v1.18/network/servicemesh/gateway-api/gateway-api/[Gateway API support] for HTTP and HTTPS traffic.
-https://cert-manager.io/docs/usage/gateway/[cert-manager can issue certificates for `Gateway` resources], but using this integration requires us to install the Gateway API custom resource definitions and enable Gateway API support in cert-manager.
-That implementation doesn't support `ListenerSet` resources.
-It also doesn't support `TCPRoute` or `UDPRoute`, which are outside the scope of the initial release.
-Upstream implementations for https://github.com/cilium/cilium/pull/46303[`ListenerSet`] and https://github.com/cilium/cilium/pull/46184[`TCPRoute` and `UDPRoute`] have been merged, but aren't available in the Cilium 1.18 release used by VSHN Managed Talos.
+Cilium also provides https://docs.cilium.io/en/v1.18/network/servicemesh/gateway-api/gateway-api/[Gateway API support] for HTTP and HTTPS traffic.
+https://cert-manager.io/docs/usage/gateway/[cert-manager can issue certificates for `Gateway` resources].
+
+Cilium is actively working on improving their Gateway API implementation.
+Support for https://github.com/cilium/cilium/pull/46303[`ListenerSet`] and https://github.com/cilium/cilium/pull/46184[`TCPRoute` and `UDPRoute`] have been merged, and are available in https://github.com/cilium/cilium/releases/tag/v1.20.0[Cilium 1.20].
+
+Finally, cert-manager can https://cert-manager.io/docs/usage/gateway/[issue certificates for `Gateway` resources with an appropriate configuration].
+Starting with version 1.20, cert-manager also supports the Gateway API `ListenerSet` CRD.
+
+
+=== kgateyway
+// TODO
+
+=== HAProxy Ingress
+// TODO
 
 == Decision
 
-We use Cilium as the ingress implementation for VSHN Managed Talos clusters.
-For the initial release, we support the Kubernetes Ingress API through the Cilium Ingress controller, using Cilium's shared load-balancer mode.
-We may offer dedicated load balancers for selected `Ingress` resources in the future.
-We don't enable or support Gateway API, IPv6, or dual-stack ingress in the initial release.
-
-We will reassess Gateway API after the initial release, once we've validated the implementation against our requirements and defined how we will operate and support it.
+We use Cilium as the ingress implementation for VSHN Managed Talos.
+Initially, VSHN Managed Talos will only support the Kubernetes Ingress API through the Cilium Ingress controller, using Cilium's shared load-balancer mode.
+However, we plan to offer Gateway API support via Cilium's Gateway API implementation in the future.
 
 == Rationale
 
-Cilium meets the requirements for the initial VSHN Managed Talos release, and VSHN already has operational experience with Cilium in its OpenShift environment.
-It supports HTTP and HTTPS routing, integrates with cert-manager, can be configured to accept the PROXY protocol, and provides both shared and dedicated load-balancer modes.
-We accept the additional annotation that ACME HTTP-01 challenges require in this configuration.
+Cilium meets the requirements for VSHN Managed Talos's ingress.
+Additionally, since we already use Cilium as the CNI for VSHN Managed Talos, we don't have to maintain and operate an additional software for the ingress on VSHN Managed Talos.
 
-Gateway API doesn't provide any functionality required for the initial release.
-The Kubernetes Ingress API is stable and covers what we need, even though it's frozen and new features only land in Gateway API.
-Supporting only the Kubernetes Ingress API keeps the initial API, test, and support surface small.
-Because Cilium implements both APIs using the same networking components, deferring Gateway API doesn't require us to replace the ingress implementation if we adopt it later.
+Finally, while Cilium's ingress controller integrates with cert-manager, there is room for improvements: HTTP 01 challenges only work when configuring the challenge path directly in the target `Ingress` resource.
+While this isn't great (especially for `Ingress` resources that are managed via GitOps), we believe it should be possible to fix this shortcoming
+
+While it would be nice to offer Gateway API by default from the start, it's not strictly necessary to do so.
+Additionally, we don't have that much information regarding which Gateway API features are actually relevant to customers, so it makes more sense to defer choosing a Gateway API implementation until we have some customer insights.
+Also, while the Kubernetes Ingress API isn't getting developed anymore, and new features only land in Gateway API, it's stable and covers the basic features that are required to expose a simple application. From the operational perspective, only supporting the Kubernetes Ingress API keeps the test and support surface small.
+Since Cilium provides a reasonable Gateway API implementation, it's likely that we'll end up going with Cilium's implementation if and when we decide to offer a Gateway API implementation by default.
 
 IPv6 and dual-stack ingress aren't required for the initial release, and we haven't yet validated a working IPv6 setup.
 We will revisit IPv6 support separately after the initial release.
