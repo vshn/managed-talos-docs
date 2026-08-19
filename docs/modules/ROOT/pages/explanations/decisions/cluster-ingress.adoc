@@ -48,17 +48,19 @@ Finally, cert-manager can https://cert-manager.io/docs/usage/gateway/[issue cert
 
 === kgateway Gateway API 
 
-kgateway provides https://kgateway.dev/docs/envoy/latest/quickstart/[Gateway API support] for HTTP and HTTPS traffic. It's a modern and well supported CNCF sandbox project with its focus on the Gateway API.
+The https://kgateway.dev[kgateway] project provides a modern and well supported CNCF sandbox implementation of Kubernetes' Gateway API.
+However, kgateway doesn't support Kubernetes `Ingress` resources.
 
-cert-manager https://cert-manager.io/docs/usage/gateway/[issue certificates for `Gateway` resources with an appropriate configuration].
+Notably, cert-manager can https://cert-manager.io/docs/usage/gateway/[issue certificates for `Gateway` resources with an appropriate configuration].
 
-Due to the focus on the Gateway API, kgateway doesn't support Ingress.
 
 === HAProxy Ingress and Unified Gateway
 
-HAProxy offers both https://www.haproxy.com/documentation/kubernetes-ingress/[Ingress] and https://www.haproxy.com/documentation/haproxy-unified-gateway/[Gateway API] support. While the HAProxy Ingress controller supports Gateway API, it's on a early API and they do recommend to use their Unified Gateway product. Should we want to support Gateway API in the future, it would mean that we'd have to install another Operator in cluster to get the latest features.
+HAProxy offers both https://www.haproxy.com/documentation/kubernetes-ingress/[Ingress] and https://www.haproxy.com/documentation/haproxy-unified-gateway/[Gateway API] support.
+While the HAProxy Ingress controller supports Gateway API, it's on a early API and they do recommend to use their Unified Gateway product.
+Should we want to fully support Gateway API in the future, it would mean that we'd have to install another controller in each cluster.
 
-HAProxy is Ingress controller OpenShift uses, so we've gained experience running it through our Managed OpenShift product.
+The HAProxy option is attractive, since OpenShift's ingress router uses HAProxy under the hood, so we know that HAProxy in general is a solid choice for routing HTTP and HTTPS traffic to applications in a cluster.
 
 == Decision
 
@@ -81,8 +83,8 @@ Additionally, we don't have that much information regarding which Gateway API fe
 Also, while the Kubernetes Ingress API isn't getting developed anymore, and new features only land in Gateway API, it's stable and covers the basic features that are required to expose a simple application. From the operational perspective, only supporting the Kubernetes Ingress API keeps the test and support surface small.
 Since Cilium provides a reasonable Gateway API implementation, it's likely that we'll end up going with Cilium's implementation if and when we decide to offer a Gateway API implementation by default.
 
-IPv6 and dual-stack ingress aren't required for the initial release, and we haven't yet validated a working IPv6 setup.
-We will revisit IPv6 support separately after the initial release.
+Unfortunately, we didn't find a Cilium ingress controller configuration that enables IPv6 clients to connect to applications exposed over the Cilium ingress controller during initial testing while preserving client IPs.
+Our initial impression is that there's a bug in Cilium's ingress controller implementation when an IPv6 client IP is forwarded to an IPv4-only cluster via PROXY protocol.
 
 == References
 
