@@ -50,8 +50,6 @@ kgateway provides https://kgateway.dev/docs/envoy/latest/quickstart/[Gateway API
 
 cert-manager https://cert-manager.io/docs/usage/gateway/[issue certificates for `Gateway` resources with an appropriate configuration].
 
-We don't have experience with kgateway as we've not used it on our clusters.
-
 Due to the focus on the Gateway API, kgateway doesn't support Ingress.
 
 === HAProxy Ingress and Unified Gateway
