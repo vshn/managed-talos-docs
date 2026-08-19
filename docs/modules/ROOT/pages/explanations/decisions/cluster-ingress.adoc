@@ -1,0 +1,103 @@
+= Cluster ingress
+
+== Problem
+
+We need to decide how workloads on VSHN Managed Talos clusters are exposed over HTTP and HTTPS.
+Since Kubernetes offers both the Ingress API and Gateway API, we also need to decide which APIs we support for the initial release.
+
+=== Goals
+
+* Select an ingress implementation for VSHN Managed Talos clusters
+* Expose workloads over HTTP and HTTPS
+* Support automated TLS certificate issuance and renewal with cert-manager
+
+=== Non-Goals
+
+* Support for service type `LoadBalancer`
+
+== Proposals
+
+=== Cilium Ingress controller
+
+Cilium provides an https://docs.cilium.io/en/v1.18/network/servicemesh/ingress/[Ingress controller] that implements the Kubernetes Ingress API and uses Envoy to proxy traffic.
+
+Cilium can expose all `Ingress` resources through a shared `LoadBalancer` Service or create a dedicated `LoadBalancer` Service for each `Ingress` resource.
+Using either mode requires the infrastructure to provide an implementation for `LoadBalancer` Services.
+The dedicated mode gives us the option to offer dedicated `LoadBalancer` Services for selected `Ingress` resources in the future.
+Cilium can also accept the https://docs.cilium.io/en/v1.18/helm-reference/[PROXY protocol] on all Ingress listeners.
+This is a controller-wide setting, and enabling it causes the listeners to accept only PROXY protocol traffic.
+
+Cert-manager works with the Cilium Ingress controller, with one caveat from our initial testing.
+In our tested configuration with Cilium's HTTPS enforcement enabled, an `Ingress` resource using an ACME HTTP-01 challenge requires `acme.cert-manager.io/http01-edit-in-place: "true"`.
+This annotation makes cert-manager modify the existing `Ingress` resource instead of creating a separate solver resource.
+This is necessary because Cilium applies its HTTP-to-HTTPS redirect per hostname rather than per `Ingress`, so even the ACME challenge request is redirected to HTTPS, where a separate HTTP only solver `Ingress` can't answer.
+Editing the challenge into the target `Ingress` works because cert-manager also issues a temporary self-signed certificate for it, so the redirected request can complete the TLS handshake. Let's Encrypt follows the redirect and doesn't validate the certificate.
+It works around https://github.com/cilium/cilium/issues/35347[a known Cilium issue with HTTPS enforcement for multiple `Ingress` resources using the same hostname].
+
+NOTE: During initial testing, we haven't been able to access the Cilium ingress running on an IPv4 single stack cluster when connecting over IPv6 to a load balancer which has a IPv6 public IP and which forwards the client IP to the ingress controller via PROXY protocol.
+
+=== Cilium Gateway API 
+
+Cilium also provides https://docs.cilium.io/en/v1.18/network/servicemesh/gateway-api/gateway-api/[Gateway API support] for HTTP and HTTPS traffic.
+https://cert-manager.io/docs/usage/gateway/[cert-manager can issue certificates for `Gateway` resources].
+
+Cilium is actively working on improving their Gateway API implementation.
+Support for https://github.com/cilium/cilium/pull/46303[`ListenerSet`] and https://github.com/cilium/cilium/pull/46184[`TCPRoute` and `UDPRoute`] have been merged, and are available in https://github.com/cilium/cilium/releases/tag/v1.20.0[Cilium 1.20].
+
+Finally, cert-manager can https://cert-manager.io/docs/usage/gateway/[issue certificates for `Gateway` resources with an appropriate configuration].
+
+=== kgateway Gateway API 
+
+The https://kgateway.dev[kgateway] project provides a modern and well supported CNCF sandbox implementation of Kubernetes' Gateway API.
+However, kgateway doesn't support Kubernetes `Ingress` resources.
+
+Notably, cert-manager can https://cert-manager.io/docs/usage/gateway/[issue certificates for `Gateway` resources with an appropriate configuration].
+
+
+=== HAProxy Ingress and Unified Gateway
+
+HAProxy offers both https://www.haproxy.com/documentation/kubernetes-ingress/[Ingress] and https://www.haproxy.com/documentation/haproxy-unified-gateway/[Gateway API] support.
+While the HAProxy Ingress controller supports Gateway API, it's on a early API and they do recommend to use their Unified Gateway product.
+Should we want to fully support Gateway API in the future, it would mean that we'd have to install another controller in each cluster.
+
+The HAProxy option is attractive, since OpenShift's ingress router uses HAProxy under the hood, so we know that HAProxy in general is a solid choice for routing HTTP and HTTPS traffic to applications in a cluster.
+
+== Decision
+
+We use Cilium as the ingress implementation for VSHN Managed Talos.
+Initially, VSHN Managed Talos will only support the Kubernetes Ingress API through the Cilium Ingress controller, using Cilium's shared load-balancer mode.
+However, we plan to offer Gateway API support via Cilium's Gateway API implementation in the future.
+
+== Rationale
+
+Cilium meets the requirements for VSHN Managed Talos's ingress.
+Additionally, since we already use Cilium as the CNI for VSHN Managed Talos, we don't have to maintain and operate an additional software for the ingress on VSHN Managed Talos.
+
+Finally, the cert-manager integration on the Cilium Ingress controller has one rough edge, as described above. An ACME HTTP-01 challenge only succeeds when the challenge path is served from the target `Ingress` itself, which requires the `acme.cert-manager.io/http01-edit-in-place: "true"` annotation on each such `Ingress`.
+Rather than require users to set this annotation by hand, we add it automatically. An Espejote `ManagedResource` injects it into any `Ingress` that requests a certificate (one carrying a `cert-manager.io/cluster-issuer` or `cert-manager.io/issuer` annotation), and leaves all other `Ingress` resources untouched.
+The annotation is applied via server-side apply, so it survives reconciliation by GitOps tooling such as ArgoCD.
+As a result, Let's Encrypt certificates work out of the box on new clusters, though this remains a workaround for the Cilium behavior rather than a proper fix.
+
+While it would be nice to offer Gateway API by default from the start, it's not strictly necessary to do so.
+Additionally, we don't have that much information regarding which Gateway API features are actually relevant to customers, so it makes more sense to defer choosing a Gateway API implementation until we've gathered some customer insights.
+Also, while the Kubernetes Ingress API isn't getting developed anymore, and new features only land in Gateway API, it's stable and covers the basic features that are required to expose a simple application. From the operational perspective, only supporting the Kubernetes Ingress API keeps the test and support surface small.
+Since Cilium provides a reasonable Gateway API implementation, it's likely that we'll end up going with Cilium's implementation if and when we decide to offer a Gateway API implementation by default.
+
+Unfortunately, we didn't find a Cilium ingress controller configuration that enables IPv6 clients to connect to applications exposed over the Cilium ingress controller during initial testing while preserving client IPs.
+Our initial impression is that there's a bug in Cilium's ingress controller implementation when an IPv6 client IP is forwarded to an IPv4-only cluster via PROXY protocol.
+
+== References
+
+* https://kubernetes.io/docs/concepts/services-networking/ingress/[Kubernetes: Ingress]
+* https://gateway-api.sigs.k8s.io/[Kubernetes Gateway API]
+* https://docs.cilium.io/en/v1.18/network/servicemesh/ingress/[Cilium 1.18: Kubernetes Ingress support]
+* https://docs.cilium.io/en/v1.18/network/servicemesh/gateway-api/gateway-api/[Cilium 1.18: Gateway API support]
+* https://www.haproxy.com/documentation/kubernetes-ingress/[HAProxy Ingress controller]
+* https://www.haproxy.com/documentation/haproxy-unified-gateway/[HAProxy Unified Gateway]
+* https://kgateway.dev/docs/envoy/latest/quickstart/[kgateway controller]
+* https://cert-manager.io/docs/usage/ingress/[cert-manager: Ingress resources]
+* https://cert-manager.io/docs/reference/annotations/#acme-cert-manager-io-http01-edit-in-place[cert-manager: `http01-edit-in-place` annotation]
+* https://cert-manager.io/docs/usage/gateway/[cert-manager: Gateway resources]
+* https://github.com/cilium/cilium/issues/35347[Cilium issue #35347: HTTPS enforcement with multiple `Ingress` resources]
+* https://github.com/cilium/cilium/pull/46303[Cilium PR #46303: `ListenerSet` support]
+* https://github.com/cilium/cilium/pull/46184[Cilium PR #46184: `TCPRoute` and `UDPRoute` support]
