@@ -50,3 +50,4 @@
 ** xref:talos:ROOT:explanations/decisions/user-authentication.adoc[]
 ** xref:talos:ROOT:explanations/decisions/cluster-ingress.adoc[]
 ** xref:talos:ROOT:explanations/decisions/emergency-credentials.adoc[]
+** xref:talos:ROOT:explanations/decisions/user-kubeconfig.adoc[]
