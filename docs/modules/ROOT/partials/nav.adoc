@@ -11,6 +11,8 @@
 ** cloudscale
 
 * Update
+** cloudscale
+*** xref:how-tos/minor-upgrade.adoc[]
 
 * Authentication
 
