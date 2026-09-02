@@ -1,0 +1,65 @@
+= Minor upgrade
+
+[abstract]
+This page documents the steps which are necessary to perform Talos and Kubernetes minor version upgrades for a VSHN Managed Talos cluster.
+
+[NOTE]
+====
+This page is work in progress and may change without prior notice.
+====
+
+== Prerequisites
+
+* A local `gandalf` installation
+* Access to git.vshn.net
+* Access to the Project Syn tenant repo
+* Admin access to the target cluster
+
+== Steps
+
+. Run the Gandalf "cloudscale-update" workflow
++
+NOTE: (Internal) We'll need to adjust this step as we create more tooling for VSHN Managed Talos.
++
+[TIP]
+====
+The workflow supports updating the cluster's Kubernetes and Talos versions.
+
+The workflow queries the cluster for the current versions, and the Talos support matrix for the target Talos and Kubernetes version compatibility.
+====
++
+[TIP]
+====
+We recommend running this step in an empty directory.
+The workflow will clone the cluster's tenant repo into the working directory.
+====
++
+[source,bash]
+----
+# Clone setup repo
+git clone git@git.vshn.net:syn-dev/mako-guided-setup.git
+
+# Run update workflow
+gandalf ./mako-guided-setup/cloudscale-update.workflow ./mako-guided-setup/cloudscale/*.yml
+----
+
+. Wait for the compile pipeline to complete (or compile the cluster catalog)
+
+. Wait until ArgoCD applies the new version (or trigger a sync of the `talos-capi-cluster-cloudscale` ArgoCD application).
+
+. Wait for the upgrade to complete.
+You can observe the upgrade on the cluster.
++
+TIP: Cluster API will replace all machines when performing a Kubernetes upgrade or a Talos minor upgrade with a new base image.
++
+.Check Cluster API machines
+[source,bash]
+----
+kubectl -n syn-cluster-api get machine -w
+----
++
+.Check nodes
+[source,bash]
+----
+kubectl get nodes -w
+----
