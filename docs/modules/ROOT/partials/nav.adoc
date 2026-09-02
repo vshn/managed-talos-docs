@@ -31,6 +31,8 @@
 * GitOps
 
 * Backup and restore
+** cloudscale
+*** xref:how-tos/backup-restore.adoc[]
 
 * Day two operations
 
