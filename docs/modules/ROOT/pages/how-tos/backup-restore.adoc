@@ -329,6 +329,8 @@ kubectl -n syn-argocd-operator scale deploy --all --replicas=0
 kubectl -n syn scale deploy,sts --all --replicas=0
 kubectl -n syn-cluster-api scale deploy --all --replicas=0
 ----
++
+TIP: If the cluster's floating IPs were lost, you'll need to adjust the API IP in `restored.kubeconfig`.
 
 . Verify the restore.
 +
