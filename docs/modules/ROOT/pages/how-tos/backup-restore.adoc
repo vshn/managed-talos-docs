@@ -1,11 +1,12 @@
-= Backup and restore
+= Etcd backup and restore
 
 [abstract]
 This page explains how etcd backups work for a VSHN Managed Talos cluster, which artifacts are needed for disaster recovery, and how to restore a cluster after partial or complete control plane loss.
 
 [NOTE]
 ====
-This page is a work in progress. The procedures have been tested on a PoC cluster, including an etcd restore after control plane loss and a full rebuild after the cluster was decommissioned.
+This page is a work in progress.
+The procedures have been tested on a PoC cluster, including an etcd restore after control plane loss and a full rebuild after the cluster was decommissioned.
 ====
 
 == Backups
@@ -18,40 +19,46 @@ The component is enabled through the global defaults for the Talos distribution 
 By default, the CronJob:
 
 * takes an etcd snapshot through the Talos API every 6 hours,
-* compresses the snapshot with zstd,
+* compresses the snapshot with `zstd`,
 * encrypts it with https://age-encryption.org[age] for the configured recipient public keys,
 * uploads it to the S3 bucket `<cluster-id>-etcd-backup`.
 
-The CronJob reaches the Talos API through the `kubernetesTalosAPIAccess` machine feature. This grants the `os:etcd:backup` role to the `syn-talos-backup` namespace.
+The CronJob reaches the Talos API through the `kubernetesTalosAPIAccess` machine feature.
+This grants the `os:etcd:backup` role to the `syn-talos-backup` namespace.
 
-The component doesn't create the S3 bucket, so the bucket must exist before the first backup runs.
+The component doesn't create the S3 bucket.
+The Gandalf install workflow creates it together with the other cluster buckets.
 
 [IMPORTANT]
 ====
-The snapshots can only be decrypted with the age private key of a configured recipient. Store that key in Vault so it remains available during a disaster.
+The snapshots can only be decrypted with the `age` private key of a configured recipient.
+Store that key in Vault so it remains available during a disaster.
 ====
 
 === Cluster object backups
 
-The `cluster-backup` component (K8up) also dumps all cluster objects, including Secrets, every hour. It stores them in a restic repository in the S3 bucket `<cluster-id>-cluster-backup`.
-The restic password is stored in Vault under `clusters/kv/<tenant>/<cluster-id>/cluster-backup`.
+The `cluster-backup` component (K8up) also dumps all cluster objects, including Secrets, every hour.
+It stores them in a `restic` repository in the S3 bucket `<cluster-id>-cluster-backup`.
+The `restic` password is stored in Vault under `clusters/kv/<tenant>/<cluster-id>/cluster-backup`.
 
-This backup contains the Cluster API secrets needed to rebuild a self-managed cluster: the cluster CA, Talos secrets bundle, kubeconfig, and talosconfig. These secrets otherwise exist only in etcd.
+This backup contains the Cluster API secrets needed to rebuild a self-managed cluster: the cluster CA, Talos secrets bundle, kubeconfig, and talosconfig.
+These secrets otherwise exist only in etcd.
 An etcd snapshot on its own isn't enough for a full rebuild because replacement control plane nodes must use machine configurations generated from the original secrets bundle.
 The object backup provides an etcd-independent copy of this PKI.
 
 === Required recovery artifacts
 
-A full recovery needs all four artifacts below. Losing any one of them makes recovery impossible.
+A full recovery needs all four artifacts below.
+Losing any one of them makes recovery impossible.
 
 [cols="1,2"]
 |===
 |Artifact |Location
 
-|etcd snapshot + age private key
+|etcd snapshot + `age` private key
 |S3 `<cluster-id>-etcd-backup` + Vault
 
-|Object backup (PKI copy) + restic password
+|Object backup (PKI copy) + `restic` password
 |S3 `<cluster-id>-cluster-backup` + Vault
 
 |Cluster configuration
@@ -65,6 +72,7 @@ A full recovery needs all four artifacts below. Losing any one of them makes rec
 ====
 Neither backup includes persistent volume data.
 An etcd restore recovers the PV and PVC objects, but the referenced volumes might no longer exist.
+Backing up application data stored on persistent volumes is the application owner's responsibility.
 ====
 
 == Restore
@@ -74,6 +82,9 @@ An etcd restore recovers the PV and PVC objects, but the referenced volumes migh
 During a restore, never run `talosctl bootstrap` without `--recover-from`.
 That would initialize an empty etcd, after which the snapshot could no longer be applied.
 ====
+
+Both scenarios need access to the Talos API of the control plane nodes.
+That API is only reachable from inside the cluster network, so set up the SSH jumphost and a SOCKS5 proxy first, as described in <<_restore_access_to_the_node_network,Restore access to the node network>>.
 
 === Download and decrypt a snapshot
 
@@ -89,6 +100,24 @@ mc cp s3/${CLUSTER_ID}-etcd-backup/${CLUSTER_ID}/<latest>.snap.zst.age ./backup.
 age -d -i <age-keyfile> ./backup.zst.age | zstd -d -o ./snap.db
 ----
 
+[#_restore_access_to_the_node_network]
+=== Restore access to the node network
+
+The jumphost details are stored as outputs in the Gandalf state file of the cluster.
+Run this from the directory that contains `.gandalf-state.json`.
+
+[source,bash]
+----
+ssh_key=$(jq -r '.outputs.ssh_private_key_path.value' .gandalf-state.json)
+jumphost_ip=$(jq -r '.outputs.jumphost_public_ip.value' .gandalf-state.json)
+jumphost_host_key=$(jq -r '.outputs.jumphost_ed25519_hostkey.value' .gandalf-state.json)
+
+<guided-setup-repo>/cloudscale/scripts/socks-proxy \
+  "${ssh_key}" 127.0.0.1 "${jumphost_ip}" "${jumphost_host_key}"
+
+export https_proxy=socks5://127.0.0.1:19000
+----
+
 === Scenario 1: Etcd lost, nodes intact
 
 Use this procedure when etcd quorum is lost, for example after data corruption or a failed upgrade, but the control plane VMs still exist.
@@ -101,16 +130,20 @@ talosctl reset -n <cp1>,<cp2>,<cp3> --graceful=false --reboot \
   --system-labels-to-wipe EPHEMERAL
 ----
 +
-Use `--system-labels-to-wipe EPHEMERAL`, not `--wipe-mode all`. The latter also removes the boot and state partitions, leaves the VMs with no bootable device, and forces a full machine replacement. Wiping `EPHEMERAL` removes `/var`, including etcd, while keeping the operating system and machine configuration.
+Use `--system-labels-to-wipe EPHEMERAL`, not `--wipe-mode all`.
+The latter also removes the boot and state partitions, leaves the VMs with no bootable device, and forces a full machine replacement.
+Wiping `EPHEMERAL` removes `/var`, including etcd, while keeping the operating system and machine configuration.
 
-. After reboot, the configured nodes wait for etcd to be bootstrapped. Restore the snapshot on one node.
+. After reboot, the configured nodes wait for etcd to be bootstrapped.
+Restore the snapshot on one node.
 +
 [source,bash]
 ----
 talosctl -e <cp1> -n <cp1> bootstrap --recover-from=./snap.db
 ----
 
-. The other control plane nodes join the restored etcd automatically. Verify the cluster.
+. The other control plane nodes join the restored etcd automatically.
+Verify the cluster.
 +
 [source,bash]
 ----
@@ -123,15 +156,15 @@ kubectl get nodes
 Use this procedure when all cluster VMs have been deleted.
 Run the regular Gandalf install workflow to recreate the infrastructure, but replace the PKI setup and etcd bootstrap steps as described below.
 
-NOTE: The manual steps should eventually become part of a dedicated Gandalf restore workflow.
+NOTE: This section will be replaced by a dedicated Gandalf `talos-restore` workflow.
 
 ==== Prerequisites
 
 * A local `gandalf` installation and the guided setup repo
-* `talosctl`, `clusterctl`, `kind`, `kubectl`, `age`, `zstd`, `restic`, `jq`, `sshuttle`
+* `talosctl`, `clusterctl`, `kind`, `kubectl`, `age`, `zstd`, `restic`, and `jq`
 * `commodore` with its helper tools (`commodore tool install --missing`)
 * Access to Vault, the Project Syn tenant repo, and the cluster's S3 buckets
-* The age private key of a configured backup recipient
+* The `age` private key of a configured backup recipient
 
 ==== Recover the artifacts
 
@@ -160,7 +193,7 @@ jq -s '{apiVersion:"v1", kind:"List", items:[ .[]
         .metadata.creationTimestamp, .metadata.managedFields, .metadata.generation,
         .metadata.annotations, .status) ]}' capi-secrets.jsonl > preseed.yaml
 ----
-+
+
 . Extract the admin talosconfig and kubeconfig.
 +
 [source,bash]
@@ -172,19 +205,21 @@ jq -r '.items[]|select(.metadata.name==env.CLUSTER_ID+"-kubeconfig").data.value'
 ==== Run the install workflow with interventions
 
 The table below shows which workflow steps to run through Gandalf, perform manually, or skip.
-The cluster is restored after reconciliation. Run step 24 to remove the temporary kind cluster. Step 25 isn't required.
+The cluster is restored after the reconciliation, so the last two workflow steps aren't needed.
+
+TIP: Press kbd:[n] in the Gandalf UI to mark the current step as completed and move on without running it.
 
 [cols="4,2,5"]
 |===
 |Workflow step |How |Notes
 
-|1 to 9: prerequisites through the S3 objects user and bucket
+|1 to 9: prerequisites through the S3 objects user and buckets
 |Gandalf
 |Reuse the surviving infrastructure.
 
 |10: `And I set secrets in Vault`
 |Skip
-|This step overwrites existing backup passwords and would make the backup repositories unreadable.
+|This step regenerates the existing backup passwords.
 
 |11 to 16: schematic through `And I set up a SOCKS5 proxy via the SSH jumphost`
 |Gandalf
@@ -192,7 +227,7 @@ The cluster is restored after reconciliation. Run step 24 to remove the temporar
 
 |17: `And I install cluster API in the Kind cluster`
 |Manual
-|Perform intervention 1 below, then mark the step as completed.
+|Perform intervention 1 below, then press kbd:[n].
 
 |18 to 20: floating IPs, Project Syn configuration, `And I create the cluster via cluster API`
 |Gandalf
@@ -200,7 +235,7 @@ The cluster is restored after reconciliation. Run step 24 to remove the temporar
 
 |21: `And wait for the Talos cluster to become ready`
 |Manual
-|Perform intervention 2 below, then mark the step as completed.
+|Perform intervention 2 below, then press kbd:[n].
 
 |22: `Then I bootstrap the cluster API providers on the Talos cluster`
 |Skip
@@ -208,34 +243,35 @@ The cluster is restored after reconciliation. Run step 24 to remove the temporar
 
 |23: `And I move the cluster API cluster to the Talos cluster`
 |Manual
-|Follow <<_reconcile_the_self_managed_state,Reconcile the self-managed state>>, then mark the step as completed.
+|Follow <<_reconcile_the_self_managed_state,Reconcile the self-managed state>>.
 
-|24: `And delete the Kind cluster`
-|Gandalf
-|Run this only after verifying the reconciliation.
-
-|25: `Then I synthesize the cluster`
-|Skip and stop here
-|The restored cluster is already synthesized. Scaling Argo CD back up during reconciliation replaces this step.
+|24 and 25: `And delete the Kind cluster`, `Then I synthesize the cluster`
+|Skip
+|Delete the `kind` cluster directly after the reconciliation.
+The restored cluster is already synthesized.
 |===
 
-. Run the Gandalf cloudscale install workflow. The infrastructure steps (private network, subnet, router, S3 objects user, Talos image, jumphost, and kind cluster) are idempotent and reuse resources that still exist.
+. Run the Gandalf cloudscale install workflow.
+The infrastructure steps (private network, subnet, router, S3 objects user, Talos image, jumphost, and `kind` cluster) are idempotent and reuse resources that still exist.
 +
-Use the exact Talos, Kubernetes, and image customization versions from before the loss. Using different versions would turn the restore into an uncontrolled upgrade. Upgrade only after the cluster is healthy.
+Use the exact Talos, Kubernetes, and image customization versions from before the loss.
+Using different versions would turn the restore into an uncontrolled upgrade.
+Upgrade only after the cluster is healthy.
 +
-The API floating IP must also still exist because it's referenced by the cluster configuration and DNS.
+The API floating IP should also still exist because the cluster configuration and DNS refer to it.
+If it was released, for example after losing a full cloudscale zone, the workflow allocates a new one and writes it to the cluster's Project Syn configuration, but you have to point the `api` DNS record at the new address yourself.
 +
 [IMPORTANT]
 ====
-Skip the `And I set secrets in Vault` step. It doesn't check for existing values and would overwrite the `cluster-backup` and `global-backup` passwords.
-Replacing the `cluster-backup` password makes the repository containing the PKI copy unreadable and prevents recovery.
+Skip the `And I set secrets in Vault` step.
+It doesn't check for existing values and regenerates the `cluster-backup` and `global-backup` passwords.
+Vault keeps previous versions, so an overwritten password can be rolled back, but it's easier to avoid the detour.
 ====
-+
-To skip or manually complete a workflow step, quit Gandalf and edit `.gandalf-state.json`. Add the exact step name to `completed_steps`, set `current_step` to the exact name of the next step, and record any outputs needed later. Keep both fields in sync so Gandalf doesn't restart the workflow from the beginning.
 
 . Perform the `And I install cluster API in the Kind cluster` step manually and skip it in Gandalf.
 +
-Use the provider versions found in the backed-up `Provider` objects. Apply the patched cacppt CRDs and image, block cacppt from reaching the nodes, and pre-seed the original PKI.
+Use the provider versions found in the backed-up `Provider` objects.
+Apply the patched cacppt CRDs and image, and pre-seed the original PKI.
 +
 [source,bash]
 ----
@@ -249,31 +285,26 @@ kubectl apply --server-side --force-conflicts -f cloudscale/manifests/cacppt-crd
   -f cloudscale/manifests/cacppt-clusterrole.yaml -f cloudscale/manifests/cacppt-webhooks.yaml
 kubectl -n syn-cluster-api set image deploy/cacppt-controller-manager manager=<patched-cacppt-image>
 
-# prevent cacppt from reaching the nodes while retaining access to its API server
-NODE_IPS=$(kubectl get nodes -ojsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}' | tr ' ' ',')
-kubectl -n syn-cluster-api set env deploy/cacppt-controller-manager \
-  http_proxy=socks5://127.0.0.1:9 https_proxy=socks5://127.0.0.1:9 \
-  no_proxy=10.244.0.0/16,10.96.0.0/16,$NODE_IPS
-
 # let the bootstrap provider adopt the original secrets
 kubectl -n syn-cluster-api apply -f preseed.yaml
 ----
 +
-Apply the unreachable proxy only to cacppt. The infrastructure provider, capcs, must remain unproxied: it needs the cloudscale API to create the VMs and never connects to the nodes.
-+
-Don't run this step through Gandalf. Its regular setup gives cacppt working node access, which could allow the provider to bootstrap an empty etcd as soon as the first machine starts.
+[IMPORTANT]
+====
+Don't configure a proxy for cacppt, and don't run this step through Gandalf.
+The regular workflow points cacppt at the SOCKS5 proxy, which lets the provider reach the new nodes and bootstrap an empty etcd as soon as the first machine starts.
+Without proxy configuration, cacppt can't reach the nodes and the snapshot stays applicable.
+====
 
 . Continue the workflow through the floating IP, Project Syn configuration, and cluster creation steps.
-The infrastructure provider creates the new control plane VMs. Because the original PKI is already present, it generates their machine configurations from the original secrets bundle.
+The infrastructure provider creates the new control plane VMs.
+Because the original PKI is already present, it generates their machine configurations from the original secrets bundle.
 The nodes should reach the etcd state `Preparing` and wait for bootstrap.
 
 . Replace the `And wait for the Talos cluster to become ready` step with the snapshot restore.
 +
 [source,bash]
 ----
-# reach the node network through the jumphost
-sshuttle -r ubuntu@<jumphost-ip> --ssh-cmd 'ssh -i <cluster-ssh-key>' <privnet-cidr> &
-
 export TALOSCONFIG=./talosconfig-restored
 
 # verify that the old talosconfig authenticates against a new node
@@ -284,10 +315,12 @@ talosctl -e <new-cp1> -n <new-cp1> bootstrap --recover-from=./snap.db
 talosctl -e <new-cp1> -n <new-cp1>,<new-cp2>,<new-cp3> etcd members   # expect 3 members and no learners
 ----
 +
-If the authentication check fails with a TLS error, stop. It means the new nodes didn't adopt the original PKI.
+If the authentication check fails with a TLS error, stop.
+It means the new nodes didn't adopt the original PKI.
 
 . Freeze self-management as soon as the API server becomes available.
-The restored snapshot starts the cluster's own Cluster API controllers and Argo CD. Scaling them down prevents them from reconciling stale state while the kind cluster still manages the replacement machines.
+The restored snapshot starts the cluster's own Cluster API controllers and Argo CD.
+Scaling them down prevents them from reconciling stale state while the `kind` cluster still manages the replacement machines.
 +
 [source,bash]
 ----
@@ -309,7 +342,8 @@ kubectl get csr --field-selector spec.signerName=kubernetes.io/kubelet-serving  
 
 ==== Reconcile the self-managed state
 
-The restored etcd contains Cluster API objects for machines that no longer exist. The kind cluster contains the current objects for the replacement machines.
+The restored etcd contains Cluster API objects for machines that no longer exist.
+The `kind` cluster contains the current objects for the replacement machines.
 
 . Set the kubeconfig paths used throughout the reconciliation.
 +
@@ -319,7 +353,8 @@ export RESTORED_KUBECONFIG=./restored.kubeconfig
 export SEED_KUBECONFIG=./seed.kubeconfig
 ----
 
-. On the restored cluster, set `failurePolicy` to `Ignore` for the cabpt, cacppt, capcs, and capi webhook configurations. Their deployments are still scaled down, so a `Fail` policy would block the following operations.
+. On the restored cluster, set `failurePolicy` to `Ignore` for the cabpt, cacppt, capcs, and capi webhook configurations.
+Their deployments are still scaled down, so a `Fail` policy would block the following operations.
 +
 [source,bash]
 ----
@@ -331,8 +366,12 @@ for webhook in $(kubectl --kubeconfig "${RESTORED_KUBECONFIG}" \
     | kubectl --kubeconfig "${RESTORED_KUBECONFIG}" replace -f -
 done
 ----
++
+NOTE: Once the Cluster API providers are managed by a Commodore component, deleting the webhook configurations becomes an alternative to this step, because Argo CD recreates them.
 
-. Delete the stale Cluster API resources in `syn-cluster-api` on the restored cluster. Clear their finalizers first because the controllers that normally process them are scaled down. This also prevents them from touching any VMs.
+. Delete the stale Cluster API resources in `syn-cluster-api` on the restored cluster.
+Clear their finalizers first because the controllers that normally process them are scaled down.
+This also prevents them from touching any VMs.
 +
 [source,bash]
 ----
@@ -353,17 +392,12 @@ kubectl --kubeconfig "${RESTORED_KUBECONFIG}" -n syn-cluster-api \
   get cluster,taloscontrolplane,machine,cloudscalemachine
 ----
 +
-`NotFound` errors during the loop are harmless. They mean that cascading deletion already removed the resource.
+`NotFound` errors during the loop are harmless.
+They mean that cascading deletion already removed the resource.
 
-. Reapply `preseed.yaml` on the restored cluster. Deleting the Cluster resource may have garbage-collected the PKI secrets.
-+
-[source,bash]
-----
-kubectl --kubeconfig "${RESTORED_KUBECONFIG}" -n syn-cluster-api apply -f preseed.yaml
-----
-
-. Restore cacppt's node access on the kind cluster by configuring the real SOCKS proxy.
-At this point etcd is already bootstrapped, and Talos rejects a second bootstrap. The provider can safely observe the cluster and mark the source control plane as initialized, which `clusterctl move` requires.
+. Give cacppt on the `kind` cluster access to the nodes by configuring the SOCKS5 proxy.
+At this point etcd is already bootstrapped, and Talos rejects a second bootstrap.
+The provider can safely observe the cluster and mark the source control plane as initialized, which `clusterctl move` requires.
 +
 [source,bash]
 ----
@@ -381,7 +415,7 @@ kubectl --kubeconfig "${SEED_KUBECONFIG}" -n syn-cluster-api \
   no_proxy=10.244.0.0/16,10.96.0.0/16,${KIND_NODE_IPS}
 ----
 
-. Record the current machines and provider IDs, then move the Cluster API objects from kind to the restored cluster.
+. Record the current machines and provider IDs, then move the Cluster API objects from `kind` to the restored cluster.
 +
 [source,bash]
 ----
@@ -415,7 +449,9 @@ kubectl --kubeconfig "${RESTORED_KUBECONFIG}" -n syn-cluster-api \
   get machine -o wide
 ----
 +
-All machines must become `Ready`, and their provider IDs must match the values recorded on the kind cluster. Confirm in cloudscale that only the expected replacement VMs exist (three control plane nodes and the configured number of workers). No additional VMs may appear.
+All machines must become `Ready`, and their provider IDs must match the values recorded on the `kind` cluster.
+Confirm in cloudscale that only the expected replacement VMs exist, which are three control plane nodes and the configured number of workers.
+No additional VMs may appear.
 
 . Scale Argo CD and steward back up.
 +
@@ -427,16 +463,24 @@ kubectl --kubeconfig "${RESTORED_KUBECONFIG}" -n syn \
   scale deploy,sts --all --replicas=1
 ----
 
-. Update `.gandalf-state.json`: mark the exact workflow steps 20 through 23 as completed, set the `talos_kubeconfig` output to the path of `restored.kubeconfig`, and set `current_step` to the exact name of step 24.
-
-. Run step 24 through Gandalf to delete the kind cluster. Do this only after the machine adoption and controller restart have been verified. Skip step 25 because the restored cluster is already synthesized.
+. Delete the `kind` cluster once the machine adoption and the controller restart are verified.
++
+[source,bash]
+----
+kind delete cluster -n capi-seed-${CLUSTER_ID}
+----
 
 ==== Post-restore cleanup
 
-* Delete PVCs and PVs that reference volumes which no longer exist. The affected workloads will provision new, empty volumes (see the note about PV data above).
-* Point the ingress DNS records to the floating IP allocated during the install workflow. Don't use a load balancer VIP because it changes whenever the load balancer is recreated.
+* Delete PVCs and PVs that reference volumes which no longer exist.
+The affected workloads will provision new, empty volumes (see the note about PV data above).
+* Point the ingress DNS records to the floating IP allocated during the install workflow.
+Don't use a load balancer VIP because it changes whenever the load balancer is recreated.
 * Update any external allow-lists with the new public IP of the recreated egress router.
 * Check for old cloudscale load balancers in the `error` state and delete those that aren't claimed by a service.
-* Make sure backups resume. A new snapshot should appear in `<cluster-id>-etcd-backup` after the next 6-hour interval, and the K8up schedule should run again.
-* Let Argo CD sync and review the expected drift, including the ingress floating IP and image slug.
+* Make sure backups resume.
+A new snapshot should appear in `<cluster-id>-etcd-backup` after the next 6-hour interval, and the K8up schedule should run again.
+* Let Argo CD sync and review the remaining drift.
+The Talos image slug shouldn't drift at this point.
+If it does, Cluster API replaces every node, so verify the cluster's Project Syn configuration instead of letting the sync proceed.
 * Delete all local files that contain secret material, including snapshots, preseed files, talosconfig, kubeconfig, and dumps.
