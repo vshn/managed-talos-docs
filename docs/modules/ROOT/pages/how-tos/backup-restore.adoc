@@ -153,7 +153,7 @@ kubectl get nodes
 
 === Scenario 2: Full cluster loss
 
-Use this procedure when all cluster VMs have been deleted.
+Use this procedure when all cluster control plane nodes have been lost.
 Run the regular Gandalf install workflow to recreate the infrastructure, but replace the PKI setup and etcd bootstrap steps as described below.
 
 NOTE: This section will be replaced by a dedicated Gandalf `talos-restore` workflow.
