@@ -291,7 +291,7 @@ kubectl -n syn-cluster-api apply -f preseed.yaml
 +
 [IMPORTANT]
 ====
-Don't configure a proxy for cacppt, and don't run this step through Gandalf.
+Don't configure a proxy for the Talos CAPI control plane provider (cacppt), and don't run this step through Gandalf.
 The regular workflow points cacppt at the SOCKS5 proxy, which lets the provider reach the new nodes and bootstrap an empty etcd as soon as the first machine starts.
 Without proxy configuration, cacppt can't reach the nodes and the snapshot stays applicable.
 ====
