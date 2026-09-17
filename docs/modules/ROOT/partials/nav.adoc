@@ -44,6 +44,8 @@
 ** cloudscale
 
 * Decommissioning
+** cloudscale
+*** xref:how-tos/decommission.adoc[Decommission]
 
 * Guidelines
 
