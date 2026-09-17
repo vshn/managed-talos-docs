@@ -6,6 +6,10 @@
 
 * Supported Infrastructures
 ** cloudscale
+*** xref:how-tos/install.adoc[Install]
+*** xref:how-tos/minor-upgrade.adoc[]
+*** xref:how-tos/backup-restore.adoc[]
+*** xref:how-tos/decommission.adoc[Decommission]
 
 * Install
 ** cloudscale
