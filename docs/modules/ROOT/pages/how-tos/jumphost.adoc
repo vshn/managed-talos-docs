@@ -1,0 +1,110 @@
+= Temporary jumphost
+
+[abstract]
+This page provides how-tos for provisioning and decommissioning a temporary Ubuntu jumphost for a VSHN Managed Talos cluster.
+
+== Prerequisites
+
+* A local `gandalf` installation
+* Access to the Project Syn tenant repo
+* Access to cloudscale
+* Access to the target cluster
+
+== Provisioning
+
+TIP: We recommend running everything in an empty directory.
+
+. Clone the workflow repository
++
+[NOTE]
+====
+You can use an existing checkout of the workflows repo.
+If you, make sure that you fetch the latest changes.
+====
++
+[source,bash]
+----
+git clone git@github.com:vshn/managed-talos-workflows
+----
+
+. Run the Gandalf "cloudscale-jumphost" workflow
++
+[source,bash]
+----
+WORKFLOW_DIR=./managed-talos-workflows <1>
+gandalf run "${WORKFLOW_DIR}/cloudscale-jumphost.workflow" \
+  ${WORKFLOW_DIR}/cloudscale/*.yml
+  ${WORKFLOW_DIR}/shared/*.yml
+----
+<1> Adjust this variable to point to the workflow repository checkout.
+
+. Use the connection details shown in the last Gandalf spell to access the jumphost.
+
+== Accessing Talos API
+
+. Use the workflow helper script to establish a SOCKS proxy tunnel to the jumphost
++
+[source,bash]
+----
+proxy_port=19000 <1>
+"${WORKFLOW_DIR}/cloudscale/scripts/socks-proxy" \
+  "$(jq -r '.outputs.ssh_private_key_path.value' .gandalf-state.json)" \
+  localhost \
+  "$(jq -r '.outputs.jumphost_public_ip.value' .gandalf-state.json)" \
+  "$(jq -r '.outputs.jumphost_ed25519_hostkey.value' .gandalf-state.json)" \
+  "${proxy_port}"
+----
+<1> Replace with a different port number if port 19000 is already in-use.
+
+. Grab the talosconfig from the cluster
++
+[source,bash]
+----
+base_domain=$(jq -r '.outputs.base_domain.value' .gandalf-state.json)
+cluster_id=$(jq -r '.outputs.commodore_cluster_id.value' .gandalf-state.json)
+curl -H"Accept: application/yaml" \
+  "https://kubeconfig.apps.${cluster_id}.${base_domain}" \
+  -o "${cluster_id}.kubeconfig"
+export KUBECONFIG="${cluster_id}.kubeconfig"
+kubectl -n syn-cluster-api get secret ${cluster_id}-talosconfig \
+  -o go-template='{{.data.talosconfig|base64decode}}' \
+> "${cluster_id}.talosconfig"
+----
+<1> Replace with path to kubeconfig for the target cluster
+
+. Run `talosctl` over the SOCKS proxy
++
+[source,bash]
+----
+export https_proxy="socks5://localhost:${proxy_port}" 
+talosctl dashboard --talosconfig "${cluster_id}.talosconfig"
+----
+// TODO: figure out node args
+
+== Decommissioning
+
+. Clone the workflow repository
++
+[NOTE]
+====
+You can use an existing checkout of the workflows repo.
+If you, make sure that you fetch the latest changes.
+====
++
+[source,bash]
+----
+git clone git@github.com:vshn/managed-talos-workflows
+----
+
+. Run the Gandalf "cloudscale-jumphost" workflow
++
+[source,bash]
+----
+WORKFLOW_DIR=./managed-talos-workflows <1>
+# NOTE(sg): or delete fields "current_step" and "completed_steps"
+rm .gandalf-state.json
+gandalf run "${WORKFLOW_DIR}/cloudscale-jumphost-decommission.workflow" \
+  ${WORKFLOW_DIR}/cloudscale/*.yml
+  ${WORKFLOW_DIR}/shared/*.yml
+----
+<1> Adjust this variable to point to the workflow repository checkout.
