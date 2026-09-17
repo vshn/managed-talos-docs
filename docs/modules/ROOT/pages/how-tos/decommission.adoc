@@ -1,0 +1,44 @@
+= Decommission cluster on cloudscale
+
+[abstract]
+This page documents the steps which are necessary to decommission a VSHN Managed Talos cluster on cloudscale.
+
+== Prerequisites
+
+* A local `gandalf` installation
+* Access to the Project Syn tenant repo
+* Access to cloudscale
+* Access to VSHN infrastructure
+* Access to the cluster
+
+== Steps
+
+TIP: We recommend running everything in an empty directory.
+
+. Clone the workflow repository
++
+[NOTE]
+====
+You can use an existing checkout of the workflows repo.
+If you, make sure that you fetch the latest changes.
+====
++
+[source,bash]
+----
+git clone git@github.com:vshn/managed-talos-workflows
+----
+
+. Run the Gandalf "cloudscale-install" workflow
++
+[source,bash]
+----
+WORKFLOW_DIR=./managed-talos-workflows <1>
+gandalf run "${WORKFLOW_DIR}/cloudscale-decommission.workflow" \
+  ${WORKFLOW_DIR}/cloudscale/*.yml
+  ${WORKFLOW_DIR}/shared/*.yml
+----
+<1> Adjust this variable to point to the workflow repository checkout.
+
+. Check that all cloudscale resources got deleted via https://control.cloudscale.ch[cloudscale control panel].
+
+. Clean up remaining VSHN resources related to the decommissioned cluster (wiki pages, open tickets, ...).
