@@ -1,6 +1,6 @@
 = VSHN Managed Talos Documentation
 
-This repository contains all the content of the VSHN Managed Talos documentation hosted at https://kb.vshn.ch/oc4/.
+This repository contains all the content of the VSHN Managed Talos documentation hosted at https://kb.vshn.ch/talos/.
 
 The content is written in https://asciidoctor.org/docs/what-is-asciidoc/[AsciiDoc] and rendered using https://docs.antora.org/[Antora].
 
