@@ -8,6 +8,7 @@
 ** cloudscale
 *** xref:how-tos/install.adoc[Install]
 *** xref:how-tos/minor-upgrade.adoc[]
+*** xref:how-tos/jumphost.adoc[]
 *** xref:how-tos/backup-restore.adoc[]
 *** xref:how-tos/decommission.adoc[Decommission]
 
@@ -28,6 +29,8 @@
 * Storage
 
 * Machine and Node Management
+** cloudscale
+*** xref:how-tos/jumphost.adoc[]
 
 ** cloudscale
 
@@ -42,10 +45,10 @@
 *** xref:how-tos/backup-restore.adoc[]
 
 * Day two operations
+** cloudscale
+*** xref:how-tos/jumphost.adoc[]
 
 ** Runbooks
-
-** cloudscale
 
 * Decommissioning
 ** cloudscale
