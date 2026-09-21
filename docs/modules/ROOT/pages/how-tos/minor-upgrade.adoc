@@ -11,15 +11,25 @@ This page is work in progress and may change without prior notice.
 == Prerequisites
 
 * A local `gandalf` installation
-* Access to git.vshn.net
 * Access to the Project Syn tenant repo
 * Admin access to the target cluster
 
 == Steps
 
-. Run the Gandalf "cloudscale-update" workflow
+. Clone the workflow repository
 +
-NOTE: (Internal) We'll need to adjust this step as we create more tooling for VSHN Managed Talos.
+[NOTE]
+====
+You can use an existing checkout of the workflows repo.
+If you, make sure that you fetch the latest changes.
+====
++
+[source,bash]
+----
+git clone git@github.com:vshn/managed-talos-workflows
+----
+
+. Run the Gandalf "cloudscale-upgrade" workflow
 +
 [TIP]
 ====
@@ -31,21 +41,18 @@ The workflow queries the cluster for the current versions, and the Talos support
 [TIP]
 ====
 We recommend running this step in an empty directory.
-The workflow will clone the cluster's tenant repo into the working directory.
+The workflow will compile the cluster catalog in the working directory.
 ====
 +
 [source,bash]
 ----
-# Clone setup repo
-git clone git@git.vshn.net:syn-dev/mako-guided-setup.git
-
-# Run update workflow
-gandalf ./mako-guided-setup/cloudscale-update.workflow ./mako-guided-setup/cloudscale/*.yml
+WORKFLOW_DIR=./managed-talos-workflows <1>
+# Run upgrade workflow
+gandalf run "${WORKFLOW_DIR}/cloudscale-upgrade.workflow" \
+  ${WORKFLOW_DIR}/cloudscale/*.yml
+  ${WORKFLOW_DIR}/shared/*.yml
 ----
-
-. Wait for the compile pipeline to complete (or compile the cluster catalog)
-
-. Wait until ArgoCD applies the new version (or trigger a sync of the `talos-capi-cluster-cloudscale` ArgoCD application).
+<1> Adjust this variable to point to the workflow repository checkout.
 
 . Wait for the upgrade to complete.
 You can observe the upgrade on the cluster.
