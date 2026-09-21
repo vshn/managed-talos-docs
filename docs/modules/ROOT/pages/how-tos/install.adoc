@@ -1,0 +1,53 @@
+= Install cluster on cloudscale
+
+[abstract]
+This page documents the steps which are necessary to install a VSHN Managed Talos cluster on cloudscale.
+
+== Prerequisites
+
+* A local `gandalf` installation
+* Access to the Project Syn tenant repo
+* Access to cloudscale
+* Access to VSHN infrastructure
+
+== Steps
+
+TIP: We recommend running everything in an empty directory.
+
+. Clone the workflow repository
++
+[NOTE]
+====
+You can use an existing checkout of the workflows repo.
+If you, make sure that you fetch the latest changes.
+====
++
+[source,bash]
+----
+git clone git@github.com:vshn/managed-talos-workflows
+----
+
+. Run the Gandalf "cloudscale-install" workflow
++
+[source,bash]
+----
+WORKFLOW_DIR=./managed-talos-workflows <1>
+gandalf run "${WORKFLOW_DIR}/cloudscale-install.workflow" \
+  ${WORKFLOW_DIR}/cloudscale/*.yml
+  ${WORKFLOW_DIR}/shared/*.yml
+----
+<1> Adjust this variable to point to the workflow repository checkout.
+
+. Download the OIDC kubeconfig and verify that you can access the cluster using your VSHN account
++
+[source,bash]
+----
+base_domain=$(jq -r '.outputs.base_domain.value' .gandalf-state.json)
+cluster_id=$(jq -r '.outputs.commodore_cluster_id.value' .gandalf-state.json)
+curl -H"Accept: application/yaml" \
+  "https://kubeconfig.apps.${cluster_id}.${base_domain}" \
+  -o "${cluster_id}.kubeconfig"
+export KUBECONFIG="$(pwd)/${cluster_id}.kubeconfig"
+kubectl whoami
+kubectl get nodes
+----
